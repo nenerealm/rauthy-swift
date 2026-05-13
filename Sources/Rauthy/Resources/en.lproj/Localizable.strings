@@ -17,14 +17,12 @@
 "error.insufficientScope"          = "You don't have permission to do that.";
 "error.reauthenticationRequired"   = "Please sign in again.";
 "error.malformedJWT"               = "The identity token is malformed.";
-"error.invalidJWT"                 = "The identity token is invalid.";
-"error.keychainError"              = "Secure storage error.";
-"error.unexpected"                 = "An unexpected error occurred.";
+"error.unexpected"                 = "An unexpected error occurred: %@";
 
 // MARK: - OAuthError codes (RFC 6749 §5.2 + OIDC Core §3.1.2.6)
 "oauth.invalidRequest"             = "The sign-in request was invalid.";
 "oauth.invalidClient"              = "App credentials are invalid.";
-"oauth.invalidGrant"               = "Sign-in was rejected. Please try again.";
+"oauth.invalidGrant"               = "Sign-in credentials are invalid or expired. Please try again.";
 "oauth.unauthorizedClient"         = "This app is not authorized for sign-in.";
 "oauth.unsupportedGrantType"       = "Sign-in method is not supported.";
 "oauth.invalidScope"               = "Requested permissions are invalid.";
@@ -54,10 +52,10 @@
 "keychain.duplicateItem"        = "An item already exists in secure storage.";
 "keychain.accessDenied"         = "Secure storage access was denied.";
 "keychain.requiresUserPresence" = "Please unlock the device to continue.";
-"keychain.osStatus"             = "Secure storage error (%lld).";
+"keychain.osStatus"             = "Secure storage error (%@).";
 
 // MARK: - ServerError (generic by status code)
-"server.error" = "The server returned an error (%lld).";
+"server.error" = "The server returned an error (%@).";
 
 // MARK: - SwiftUI built-in UI strings
 "ui.errorAlert.title"   = "Sign-In Error";

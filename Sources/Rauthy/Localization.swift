@@ -52,29 +52,48 @@ internal enum RauthyL10n {
         chooseBundle().localizedString(forKey: key, value: key, table: nil)
     }
 
-    /// Formatted key lookup (`%lld`, `%@`, etc.). Use this for messages that
-    /// embed runtime values like HTTP status codes.
+    /// Formatted key lookup. Replaces the first occurrence of `%@` in the
+    /// resolved string with `arg`. Use this for messages that embed a single
+    /// runtime value (HTTP status, OS status, error description).
     ///
-    /// Locale is intentionally NOT passed to `String(format:)` — we don't want
-    /// digit grouping on status codes (HTTP 25,300 looks like a typo, not a
-    /// status). The localized format string controls translation; argument
-    /// rendering stays POSIX.
-    static func string(_ key: String, _ args: any CVarArg...) -> String {
+    /// Deliberately uses literal substitution rather than `String(format:)`.
+    /// `String(format:)` reads garbage memory or crashes if a translator
+    /// accidentally writes `%lld`/`%s` where the SDK passes a `String` — and
+    /// `.strings` files are user-editable. Manual substitution turns a bad
+    /// translation into a cosmetic bug, not a production crash.
+    static func string(_ key: String, _ arg: String) -> String {
         let format = string(key)
-        return String(format: format, arguments: args)
+        guard let range = format.range(of: "%@", options: .literal) else {
+            // Translator dropped the placeholder; degrade gracefully by
+            // appending the argument so the value still reaches the user.
+            return format.isEmpty ? arg : "\(format) \(arg)"
+        }
+        return format.replacingCharacters(in: range, with: arg)
     }
 
     /// Resolve the best `.lproj` bundle for the current override (if any),
     /// using Apple's BCP-47 matcher. Returns the main module bundle when no
     /// override is set — Foundation then picks the user's preferred locale.
+    ///
+    /// Special-cases Chinese: a bare `Locale(identifier: "zh")` would
+    /// otherwise miss the `zh-Hans` / `zh-Hant` lprojs because language-code
+    /// extraction strips the script tag. We expand to script-tagged candidates
+    /// before handing off to Foundation's matcher.
     private static func chooseBundle() -> Bundle {
         guard let override = Rauthy.locale else {
             return .module
         }
 
         var preferences: [String] = [override.identifier]
-        if let lang = override.language.languageCode?.identifier {
+        if let lang = override.language.languageCode?.identifier, lang != override.identifier {
             preferences.append(lang)
+            // Foundation matches "zh" → "zh-Hans" only when given an explicit
+            // script. Inject sensible defaults so callers passing just "zh"
+            // don't silently fall back to English.
+            if lang == "zh" {
+                preferences.append("zh-Hans")
+                preferences.append("zh-Hant")
+            }
         }
 
         let candidates = Bundle.preferredLocalizations(

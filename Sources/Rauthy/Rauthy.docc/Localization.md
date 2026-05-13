@@ -11,7 +11,7 @@ and **Japanese (`ja`)** for every user-facing string it produces:
 - ``RauthyError``, ``OAuthError``, ``JWTValidationFailure``, ``KeychainError``,
   and ``ServerError`` — all conform to `LocalizedError`, so
   `error.localizedDescription` returns translated copy.
-- The built-in alert from ``SwiftUICore/View/rauthyErrorAlert(_:)`` (title +
+- The built-in alert from ``SwiftUI/View/rauthyErrorAlert(_:)`` (title +
   dismiss button).
 
 By default, the SDK follows the **user's system locale**. To honor an in-app
@@ -51,6 +51,22 @@ is a single `Localizable.strings` file under
 write from any actor or thread. Error descriptions are computed synchronously
 when `localizedDescription` is accessed, so changing the locale immediately
 affects subsequent error displays.
+
+> Note: A `RauthyError` you've already passed to SwiftUI — for example via
+> ``RauthyAuthState/lastError`` while ``SwiftUI/View/rauthyErrorAlert(_:)`` is
+> showing — won't re-render its title and message until the view next updates.
+> Error alerts are transient, so the practical impact is small; the next error
+> uses the new locale. If you need live re-rendering, observe ``Rauthy/locale``
+> changes yourself and force a view refresh.
+
+## Distribution
+
+The SDK ships translations as SwiftPM resources (`Bundle.module`). This works
+when the SDK is consumed via Swift Package Manager (the supported path). If
+you re-distribute as an XCFramework, CocoaPods, or vendored sources without
+preserving the resource bundle, ``Rauthy/locale`` will return the raw key
+(`"error.networkUnavailable"`) instead of localized copy. Stick with SwiftPM
+or open an issue if you need another distribution channel.
 
 ## What's NOT localized
 

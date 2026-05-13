@@ -14,14 +14,12 @@
 "error.insufficientScope"          = "この操作を行う権限がありません。";
 "error.reauthenticationRequired"   = "もう一度サインインしてください。";
 "error.malformedJWT"               = "ID トークンの形式が正しくありません。";
-"error.invalidJWT"                 = "ID トークンが無効です。";
-"error.keychainError"              = "安全なストレージのエラーが発生しました。";
-"error.unexpected"                 = "予期しないエラーが発生しました。";
+"error.unexpected"                 = "予期しないエラーが発生しました:%@";
 
 // MARK: - OAuth エラーコード
 "oauth.invalidRequest"             = "サインインリクエストが無効です。";
 "oauth.invalidClient"              = "アプリの認証情報が無効です。";
-"oauth.invalidGrant"               = "サインインが拒否されました。もう一度お試しください。";
+"oauth.invalidGrant"               = "サインインの認証情報が無効か期限切れです。もう一度お試しください。";
 "oauth.unauthorizedClient"         = "このアプリにはサインイン権限がありません。";
 "oauth.unsupportedGrantType"       = "サポートされていないサインイン方法です。";
 "oauth.invalidScope"               = "要求された権限が無効です。";
@@ -51,10 +49,10 @@
 "keychain.duplicateItem"        = "安全なストレージにすでに項目が存在します。";
 "keychain.accessDenied"         = "安全なストレージへのアクセスが拒否されました。";
 "keychain.requiresUserPresence" = "デバイスのロックを解除してから続行してください。";
-"keychain.osStatus"             = "安全なストレージのエラー(%lld)。";
+"keychain.osStatus"             = "安全なストレージのエラー(%@)。";
 
 // MARK: - サーバーエラー
-"server.error" = "サーバーがエラーを返しました(%lld)。";
+"server.error" = "サーバーがエラーを返しました(%@)。";
 
 // MARK: - SwiftUI ビルトイン文字列
 "ui.errorAlert.title"   = "サインインエラー";

@@ -161,8 +161,8 @@ extension RauthyError {
             return inner.errorDescription
         case .keychainError(let inner):
             return inner.errorDescription
-        case .unexpected:
-            return RauthyL10n.string("error.unexpected")
+        case .unexpected(let inner):
+            return RauthyL10n.string("error.unexpected", inner.localizedDescription)
         }
     }
 }
@@ -179,7 +179,7 @@ extension KeychainError {
         case .requiresUserPresence:
             return RauthyL10n.string("keychain.requiresUserPresence")
         case .osStatus(let code):
-            return RauthyL10n.string("keychain.osStatus", Int64(code))
+            return RauthyL10n.string("keychain.osStatus", String(code))
         }
     }
 }

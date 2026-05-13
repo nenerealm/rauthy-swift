@@ -64,7 +64,7 @@ public struct ServerError: Error, Sendable, Equatable, LocalizedError {
     }
 
     public var errorDescription: String? {
-        RauthyL10n.string("server.error", Int64(statusCode))
+        RauthyL10n.string("server.error", String(statusCode))
     }
 }
 

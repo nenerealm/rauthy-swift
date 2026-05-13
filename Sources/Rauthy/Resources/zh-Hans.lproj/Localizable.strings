@@ -14,14 +14,12 @@
 "error.insufficientScope"          = "你没有执行此操作的权限。";
 "error.reauthenticationRequired"   = "请重新登录。";
 "error.malformedJWT"               = "身份令牌格式错误。";
-"error.invalidJWT"                 = "身份令牌无效。";
-"error.keychainError"              = "安全存储出错。";
-"error.unexpected"                 = "发生了意外错误。";
+"error.unexpected"                 = "发生了意外错误:%@";
 
 // MARK: - OAuthError 代码
 "oauth.invalidRequest"             = "登录请求无效。";
 "oauth.invalidClient"              = "App 凭据无效。";
-"oauth.invalidGrant"               = "登录被拒绝,请重试。";
+"oauth.invalidGrant"               = "登录凭据无效或已过期,请重试。";
 "oauth.unauthorizedClient"         = "此 App 未获得登录授权。";
 "oauth.unsupportedGrantType"       = "不支持的登录方式。";
 "oauth.invalidScope"               = "请求的权限无效。";
@@ -51,10 +49,10 @@
 "keychain.duplicateItem"        = "安全存储中已存在该项。";
 "keychain.accessDenied"         = "安全存储访问被拒绝。";
 "keychain.requiresUserPresence" = "请解锁设备后继续。";
-"keychain.osStatus"             = "安全存储出错(代码 %lld)。";
+"keychain.osStatus"             = "安全存储出错(代码 %@)。";
 
 // MARK: - 服务器错误(按状态码)
-"server.error" = "服务器返回错误(%lld)。";
+"server.error" = "服务器返回错误(%@)。";
 
 // MARK: - SwiftUI 内置文案
 "ui.errorAlert.title"   = "登录出错";

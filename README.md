@@ -45,6 +45,9 @@ Or in Xcode: File → Add Package Dependencies → paste the repo URL.
 - **Keychain-backed storage** + in-memory storage for tests
 - **`ClaimRule`** declarative authorization rules
 - **`swift-log` integration** for diagnostic observability
+- **Localized error messages** — English, Simplified Chinese, Japanese (runtime-switchable
+  via `Rauthy.locale`). SwiftPM-only — XCFramework / CocoaPods / vendored sources
+  won't pick up `Bundle.module` and will surface raw key strings.
 - Core types: `Token`, `IDToken`, `IDTokenClaims`, `User`, `RauthyConfig`, etc.
 - 66 Swift Testing unit + wire tests
 

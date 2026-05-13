@@ -24,7 +24,12 @@ jobs:
         run: swift build -c debug
 
       - name: swift test
-        run: swift test --enable-code-coverage
+        # --no-parallel: Rauthy.locale is a process-global mutated by the
+        # Localization suite. swift-testing's intra-suite .serialized doesn't
+        # block other suites from running in parallel, so we serialize at the
+        # runner level to keep future locale-touching suites isolation-safe.
+        # 110 tests run in under a second — parallelism wins us nothing here.
+        run: swift test --enable-code-coverage --no-parallel
 
   # Build the sample iOS app to catch SwiftUI/UIKit integration breakage.
   # Uses xcodegen to generate the .xcodeproj on the fly.
