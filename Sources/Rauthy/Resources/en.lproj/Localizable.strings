@@ -1,0 +1,64 @@
+/* Rauthy Swift SDK — English (en) strings.
+
+   Keys are the source-of-truth; other languages must match.
+   New strings: add here first, then mirror in zh-Hans.lproj and ja.lproj. */
+
+// MARK: - RauthyError (top-level)
+"error.invalidIssuerURL"           = "Invalid identity provider URL.";
+"error.missingDiscoveryDocument"   = "Could not reach the identity provider.";
+"error.missingPresentationContext" = "Sign-in is not ready. The app is missing a window to present the sign-in screen.";
+"error.userCancelled"              = "Sign-in was cancelled.";
+"error.userInteractionRequired"    = "Additional sign-in steps are required. Please try signing in again.";
+"error.stateMismatch"              = "Sign-in failed a security check. Please try again.";
+"error.networkUnavailable"         = "Network unavailable. Please check your connection and try again.";
+"error.sessionNotFound"            = "No active session found.";
+"error.tokenExpired"               = "Your session has expired.";
+"error.tokenRefreshFailed"         = "Could not refresh your session. Please sign in again.";
+"error.insufficientScope"          = "You don't have permission to do that.";
+"error.reauthenticationRequired"   = "Please sign in again.";
+"error.malformedJWT"               = "The identity token is malformed.";
+"error.invalidJWT"                 = "The identity token is invalid.";
+"error.keychainError"              = "Secure storage error.";
+"error.unexpected"                 = "An unexpected error occurred.";
+
+// MARK: - OAuthError codes (RFC 6749 §5.2 + OIDC Core §3.1.2.6)
+"oauth.invalidRequest"             = "The sign-in request was invalid.";
+"oauth.invalidClient"              = "App credentials are invalid.";
+"oauth.invalidGrant"               = "Sign-in was rejected. Please try again.";
+"oauth.unauthorizedClient"         = "This app is not authorized for sign-in.";
+"oauth.unsupportedGrantType"       = "Sign-in method is not supported.";
+"oauth.invalidScope"               = "Requested permissions are invalid.";
+"oauth.accessDenied"               = "Sign-in was denied.";
+"oauth.serverError"                = "The identity provider returned an error.";
+"oauth.temporarilyUnavailable"     = "The identity provider is temporarily unavailable.";
+"oauth.interactionRequired"        = "Additional sign-in steps are required.";
+"oauth.loginRequired"              = "Please sign in.";
+"oauth.consentRequired"            = "Please confirm your sign-in.";
+"oauth.accountSelectionRequired"   = "Please choose an account.";
+
+// MARK: - JWTValidationFailure
+"jwt.wrongIssuer"          = "Identity token came from the wrong source.";
+"jwt.wrongAudience"        = "Identity token was not issued for this app.";
+"jwt.wrongAzp"             = "Identity token was not issued for this app.";
+"jwt.expired"              = "Identity token has expired.";
+"jwt.notYetValid"          = "Identity token is not yet valid.";
+"jwt.signatureInvalid"     = "Identity token signature is invalid.";
+"jwt.wrongAlgorithm"       = "Identity token uses an unsupported algorithm.";
+"jwt.missingNonce"         = "Identity token is missing required security data.";
+"jwt.nonceMismatch"        = "Identity token failed a security check.";
+"jwt.emailNotVerified"     = "Your email is not verified.";
+"jwt.missingRequiredClaim" = "Identity token is missing required information.";
+
+// MARK: - KeychainError
+"keychain.itemNotFound"         = "Item not found in secure storage.";
+"keychain.duplicateItem"        = "An item already exists in secure storage.";
+"keychain.accessDenied"         = "Secure storage access was denied.";
+"keychain.requiresUserPresence" = "Please unlock the device to continue.";
+"keychain.osStatus"             = "Secure storage error (%lld).";
+
+// MARK: - ServerError (generic by status code)
+"server.error" = "The server returned an error (%lld).";
+
+// MARK: - SwiftUI built-in UI strings
+"ui.errorAlert.title"   = "Sign-In Error";
+"ui.errorAlert.dismiss" = "OK";

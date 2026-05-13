@@ -20,6 +20,7 @@ external dependency: `swift-log` for diagnostic output.
 ### Getting started
 
 - <doc:GettingStarted>
+- <doc:Localization>
 
 ### Authentication & sessions
 
@@ -55,8 +56,14 @@ external dependency: `swift-log` for diagnostic output.
 
 - ``RauthyError``
 - ``OAuthError``
+- ``ServerError``
 - ``JWTValidationFailure``
 - ``KeychainError``
+
+### Localization
+
+- ``Rauthy``
+- <doc:Localization>
 
 ### Storage
 

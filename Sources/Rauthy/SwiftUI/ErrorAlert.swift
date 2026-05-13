@@ -15,9 +15,10 @@ public extension View {
     ///     .rauthyErrorAlert(auth)
     /// ```
     ///
-    /// The alert title is fixed ("Auth error"); the message is a
-    /// description of the underlying `RauthyError`. For richer user-facing
-    /// copy, observe `auth.lastError` yourself and present a custom alert.
+    /// Title and dismiss-button strings are localized — set
+    /// ``Rauthy/locale`` to override the language at runtime. The message is
+    /// the underlying `RauthyError`'s `localizedDescription`. For richer copy,
+    /// observe `auth.lastError` yourself and present a custom alert.
     func rauthyErrorAlert(_ auth: RauthyAuthState) -> some View {
         modifier(RauthyErrorAlertModifier(auth: auth))
     }
@@ -29,7 +30,7 @@ private struct RauthyErrorAlertModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .alert(
-                "Auth error",
+                RauthyL10n.string("ui.errorAlert.title"),
                 isPresented: Binding(
                     get: { auth.lastError != nil },
                     set: { newValue in
@@ -38,9 +39,11 @@ private struct RauthyErrorAlertModifier: ViewModifier {
                 ),
                 presenting: auth.lastError
             ) { _ in
-                Button("OK") { auth.lastError = nil }
+                Button(RauthyL10n.string("ui.errorAlert.dismiss")) {
+                    auth.lastError = nil
+                }
             } message: { error in
-                Text(String(describing: error))
+                Text(error.localizedDescription)
             }
     }
 }

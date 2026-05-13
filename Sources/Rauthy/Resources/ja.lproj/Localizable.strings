@@ -1,0 +1,61 @@
+/* Rauthy Swift SDK — 日本語 (ja) */
+
+// MARK: - RauthyError (top-level)
+"error.invalidIssuerURL"           = "認証サーバーの URL が無効です。";
+"error.missingDiscoveryDocument"   = "認証サーバーに接続できませんでした。";
+"error.missingPresentationContext" = "サインインの準備ができていません。サインイン画面を表示するウィンドウが見つかりません。";
+"error.userCancelled"              = "サインインがキャンセルされました。";
+"error.userInteractionRequired"    = "追加のサインイン手順が必要です。もう一度サインインしてください。";
+"error.stateMismatch"              = "サインインのセキュリティチェックに失敗しました。もう一度お試しください。";
+"error.networkUnavailable"         = "ネットワークに接続できません。接続を確認してもう一度お試しください。";
+"error.sessionNotFound"            = "有効なセッションが見つかりません。";
+"error.tokenExpired"               = "セッションの有効期限が切れました。";
+"error.tokenRefreshFailed"         = "セッションを更新できませんでした。もう一度サインインしてください。";
+"error.insufficientScope"          = "この操作を行う権限がありません。";
+"error.reauthenticationRequired"   = "もう一度サインインしてください。";
+"error.malformedJWT"               = "ID トークンの形式が正しくありません。";
+"error.invalidJWT"                 = "ID トークンが無効です。";
+"error.keychainError"              = "安全なストレージのエラーが発生しました。";
+"error.unexpected"                 = "予期しないエラーが発生しました。";
+
+// MARK: - OAuth エラーコード
+"oauth.invalidRequest"             = "サインインリクエストが無効です。";
+"oauth.invalidClient"              = "アプリの認証情報が無効です。";
+"oauth.invalidGrant"               = "サインインが拒否されました。もう一度お試しください。";
+"oauth.unauthorizedClient"         = "このアプリにはサインイン権限がありません。";
+"oauth.unsupportedGrantType"       = "サポートされていないサインイン方法です。";
+"oauth.invalidScope"               = "要求された権限が無効です。";
+"oauth.accessDenied"               = "サインインが拒否されました。";
+"oauth.serverError"                = "認証サーバーがエラーを返しました。";
+"oauth.temporarilyUnavailable"     = "認証サーバーは現在利用できません。";
+"oauth.interactionRequired"        = "追加のサインイン手順が必要です。";
+"oauth.loginRequired"              = "サインインしてください。";
+"oauth.consentRequired"            = "サインインを確認してください。";
+"oauth.accountSelectionRequired"   = "アカウントを選択してください。";
+
+// MARK: - JWT 検証エラー
+"jwt.wrongIssuer"          = "ID トークンの発行元が正しくありません。";
+"jwt.wrongAudience"        = "ID トークンはこのアプリ向けに発行されていません。";
+"jwt.wrongAzp"             = "ID トークンはこのアプリ向けに発行されていません。";
+"jwt.expired"              = "ID トークンの有効期限が切れています。";
+"jwt.notYetValid"          = "ID トークンはまだ有効ではありません。";
+"jwt.signatureInvalid"     = "ID トークンの署名が無効です。";
+"jwt.wrongAlgorithm"       = "ID トークンが未対応のアルゴリズムを使用しています。";
+"jwt.missingNonce"         = "ID トークンにセキュリティ情報が含まれていません。";
+"jwt.nonceMismatch"        = "ID トークンがセキュリティチェックに失敗しました。";
+"jwt.emailNotVerified"     = "メールアドレスが未確認です。";
+"jwt.missingRequiredClaim" = "ID トークンに必要な情報が含まれていません。";
+
+// MARK: - Keychain
+"keychain.itemNotFound"         = "安全なストレージに項目が見つかりません。";
+"keychain.duplicateItem"        = "安全なストレージにすでに項目が存在します。";
+"keychain.accessDenied"         = "安全なストレージへのアクセスが拒否されました。";
+"keychain.requiresUserPresence" = "デバイスのロックを解除してから続行してください。";
+"keychain.osStatus"             = "安全なストレージのエラー(%lld)。";
+
+// MARK: - サーバーエラー
+"server.error" = "サーバーがエラーを返しました(%lld)。";
+
+// MARK: - SwiftUI ビルトイン文字列
+"ui.errorAlert.title"   = "サインインエラー";
+"ui.errorAlert.dismiss" = "OK";

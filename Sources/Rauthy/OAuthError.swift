@@ -5,7 +5,7 @@ import Foundation
 /// Returned by Rauthy's `/token` and `/authorize` endpoints when a request is
 /// malformed or denied. Use the `code` for programmatic decisions; `description`
 /// is for logging only (never display to end users — it may leak details).
-public struct OAuthError: Error, Sendable, Codable, Equatable {
+public struct OAuthError: Error, Sendable, Codable, Equatable, LocalizedError {
     public let code: Code
     public let description: String?
     public let uri: URL?
@@ -45,7 +45,7 @@ public struct OAuthError: Error, Sendable, Codable, Equatable {
 /// Server-side error envelope returned by Rauthy's non-OAuth endpoints
 /// (e.g., `/users/{id}/self`). Distinguished from `OAuthError` because the
 /// shape differs and the recovery path is different.
-public struct ServerError: Error, Sendable, Equatable {
+public struct ServerError: Error, Sendable, Equatable, LocalizedError {
     /// HTTP status code (4xx or 5xx).
     public let statusCode: Int
 
@@ -61,5 +61,44 @@ public struct ServerError: Error, Sendable, Equatable {
         self.statusCode = statusCode
         self.errorCode = errorCode
         self.message = message
+    }
+
+    public var errorDescription: String? {
+        RauthyL10n.string("server.error", Int64(statusCode))
+    }
+}
+
+// MARK: - OAuthError localized description
+
+extension OAuthError {
+    public var errorDescription: String? {
+        switch code {
+        case .invalidRequest:
+            return RauthyL10n.string("oauth.invalidRequest")
+        case .invalidClient:
+            return RauthyL10n.string("oauth.invalidClient")
+        case .invalidGrant:
+            return RauthyL10n.string("oauth.invalidGrant")
+        case .unauthorizedClient:
+            return RauthyL10n.string("oauth.unauthorizedClient")
+        case .unsupportedGrantType:
+            return RauthyL10n.string("oauth.unsupportedGrantType")
+        case .invalidScope:
+            return RauthyL10n.string("oauth.invalidScope")
+        case .accessDenied:
+            return RauthyL10n.string("oauth.accessDenied")
+        case .serverError:
+            return RauthyL10n.string("oauth.serverError")
+        case .temporarilyUnavailable:
+            return RauthyL10n.string("oauth.temporarilyUnavailable")
+        case .interactionRequired:
+            return RauthyL10n.string("oauth.interactionRequired")
+        case .loginRequired:
+            return RauthyL10n.string("oauth.loginRequired")
+        case .consentRequired:
+            return RauthyL10n.string("oauth.consentRequired")
+        case .accountSelectionRequired:
+            return RauthyL10n.string("oauth.accountSelectionRequired")
+        }
     }
 }

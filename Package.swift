@@ -7,6 +7,7 @@ import PackageDescription
 
 let package = Package(
     name: "Rauthy",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v16),
         .macOS(.v13),
@@ -27,6 +28,9 @@ let package = Package(
             name: "Rauthy",
             dependencies: [
                 .product(name: "Logging", package: "swift-log"),
+            ],
+            resources: [
+                .process("Resources"),
             ],
             swiftSettings: [
                 .enableUpcomingFeature("ExistentialAny"),

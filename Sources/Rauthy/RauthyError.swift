@@ -6,7 +6,7 @@ import Foundation
 /// don't need to handle every case explicitly; most catch a few specific ones
 /// (`.userCancelled`, `.reauthenticationRequired`) and treat the rest as
 /// generic failures.
-public enum RauthyError: Error, Sendable {
+public enum RauthyError: Error, Sendable, LocalizedError {
     // MARK: Configuration / setup
 
     /// `RauthyConfig.issuer` was not a valid URL.
@@ -104,7 +104,7 @@ extension RauthyError: Equatable {
 }
 
 /// Errors from Keychain operations.
-public enum KeychainError: Error, Sendable, Equatable {
+public enum KeychainError: Error, Sendable, Equatable, LocalizedError {
     /// No item found for the given service/account.
     case itemNotFound
 
@@ -120,4 +120,66 @@ public enum KeychainError: Error, Sendable, Equatable {
 
     /// Other Keychain error, identified by its OSStatus code.
     case osStatus(Int32)
+}
+
+// MARK: - LocalizedError
+
+extension RauthyError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidIssuerURL:
+            return RauthyL10n.string("error.invalidIssuerURL")
+        case .missingDiscoveryDocument:
+            return RauthyL10n.string("error.missingDiscoveryDocument")
+        case .missingPresentationContext:
+            return RauthyL10n.string("error.missingPresentationContext")
+        case .userCancelled:
+            return RauthyL10n.string("error.userCancelled")
+        case .userInteractionRequired:
+            return RauthyL10n.string("error.userInteractionRequired")
+        case .stateMismatch:
+            return RauthyL10n.string("error.stateMismatch")
+        case .networkUnavailable:
+            return RauthyL10n.string("error.networkUnavailable")
+        case .oauth(let inner):
+            return inner.errorDescription
+        case .server(let inner):
+            return inner.errorDescription
+        case .sessionNotFound:
+            return RauthyL10n.string("error.sessionNotFound")
+        case .tokenExpired:
+            return RauthyL10n.string("error.tokenExpired")
+        case .tokenRefreshFailed:
+            return RauthyL10n.string("error.tokenRefreshFailed")
+        case .insufficientScope:
+            return RauthyL10n.string("error.insufficientScope")
+        case .reauthenticationRequired:
+            return RauthyL10n.string("error.reauthenticationRequired")
+        case .malformedJWT:
+            return RauthyL10n.string("error.malformedJWT")
+        case .invalidJWT(let inner):
+            return inner.errorDescription
+        case .keychainError(let inner):
+            return inner.errorDescription
+        case .unexpected:
+            return RauthyL10n.string("error.unexpected")
+        }
+    }
+}
+
+extension KeychainError {
+    public var errorDescription: String? {
+        switch self {
+        case .itemNotFound:
+            return RauthyL10n.string("keychain.itemNotFound")
+        case .duplicateItem:
+            return RauthyL10n.string("keychain.duplicateItem")
+        case .accessDenied:
+            return RauthyL10n.string("keychain.accessDenied")
+        case .requiresUserPresence:
+            return RauthyL10n.string("keychain.requiresUserPresence")
+        case .osStatus(let code):
+            return RauthyL10n.string("keychain.osStatus", Int64(code))
+        }
+    }
 }

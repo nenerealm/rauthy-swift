@@ -1,0 +1,61 @@
+/* Rauthy Swift SDK — 简体中文 (zh-Hans) */
+
+// MARK: - RauthyError (top-level)
+"error.invalidIssuerURL"           = "身份服务地址无效。";
+"error.missingDiscoveryDocument"   = "无法连接到身份服务。";
+"error.missingPresentationContext" = "未准备好登录:App 缺少用于显示登录界面的窗口。";
+"error.userCancelled"              = "登录已取消。";
+"error.userInteractionRequired"    = "需要补充登录信息,请重新登录。";
+"error.stateMismatch"              = "登录未通过安全校验,请重试。";
+"error.networkUnavailable"         = "网络不可用,请检查网络连接后重试。";
+"error.sessionNotFound"            = "未找到登录会话。";
+"error.tokenExpired"               = "登录已过期。";
+"error.tokenRefreshFailed"         = "无法续期登录,请重新登录。";
+"error.insufficientScope"          = "你没有执行此操作的权限。";
+"error.reauthenticationRequired"   = "请重新登录。";
+"error.malformedJWT"               = "身份令牌格式错误。";
+"error.invalidJWT"                 = "身份令牌无效。";
+"error.keychainError"              = "安全存储出错。";
+"error.unexpected"                 = "发生了意外错误。";
+
+// MARK: - OAuthError 代码
+"oauth.invalidRequest"             = "登录请求无效。";
+"oauth.invalidClient"              = "App 凭据无效。";
+"oauth.invalidGrant"               = "登录被拒绝,请重试。";
+"oauth.unauthorizedClient"         = "此 App 未获得登录授权。";
+"oauth.unsupportedGrantType"       = "不支持的登录方式。";
+"oauth.invalidScope"               = "请求的权限无效。";
+"oauth.accessDenied"               = "登录被拒绝。";
+"oauth.serverError"                = "身份服务返回了错误。";
+"oauth.temporarilyUnavailable"     = "身份服务暂时不可用。";
+"oauth.interactionRequired"        = "需要补充登录信息。";
+"oauth.loginRequired"              = "请登录。";
+"oauth.consentRequired"            = "请确认登录。";
+"oauth.accountSelectionRequired"   = "请选择一个账号。";
+
+// MARK: - JWT 校验失败
+"jwt.wrongIssuer"          = "身份令牌来源不正确。";
+"jwt.wrongAudience"        = "身份令牌不是为此 App 签发的。";
+"jwt.wrongAzp"             = "身份令牌不是为此 App 签发的。";
+"jwt.expired"              = "身份令牌已过期。";
+"jwt.notYetValid"          = "身份令牌尚未生效。";
+"jwt.signatureInvalid"     = "身份令牌签名无效。";
+"jwt.wrongAlgorithm"       = "身份令牌使用了不支持的算法。";
+"jwt.missingNonce"         = "身份令牌缺少安全校验数据。";
+"jwt.nonceMismatch"        = "身份令牌未通过安全校验。";
+"jwt.emailNotVerified"     = "你的邮箱尚未验证。";
+"jwt.missingRequiredClaim" = "身份令牌缺少必要信息。";
+
+// MARK: - Keychain
+"keychain.itemNotFound"         = "安全存储中未找到该项。";
+"keychain.duplicateItem"        = "安全存储中已存在该项。";
+"keychain.accessDenied"         = "安全存储访问被拒绝。";
+"keychain.requiresUserPresence" = "请解锁设备后继续。";
+"keychain.osStatus"             = "安全存储出错(代码 %lld)。";
+
+// MARK: - 服务器错误(按状态码)
+"server.error" = "服务器返回错误(%lld)。";
+
+// MARK: - SwiftUI 内置文案
+"ui.errorAlert.title"   = "登录出错";
+"ui.errorAlert.dismiss" = "好";

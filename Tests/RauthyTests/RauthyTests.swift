@@ -2192,3 +2192,143 @@ struct RauthyConfigTests {
         #expect(config.adminClaim == .none)
     }
 }
+
+// MARK: - Localization
+//
+// Rauthy.locale is a process-global, so these tests must be serialized to
+// avoid one test's locale override leaking into another's reads.
+
+@Suite("Localization", .serialized)
+final class LocalizationTests {
+    init() { Rauthy.locale = nil }
+    deinit { Rauthy.locale = nil }
+
+    @Test("default locale follows system, never crashes")
+    func defaultLocale() {
+        Rauthy.locale = nil
+        let desc = RauthyError.networkUnavailable.localizedDescription
+        #expect(!desc.isEmpty)
+        #expect(desc != "error.networkUnavailable")
+    }
+
+    @Test("English override")
+    func english() {
+        Rauthy.locale = Locale(identifier: "en")
+        #expect(
+            RauthyError.networkUnavailable.localizedDescription
+                == "Network unavailable. Please check your connection and try again."
+        )
+        #expect(RauthyError.userCancelled.localizedDescription == "Sign-in was cancelled.")
+        #expect(RauthyError.tokenExpired.localizedDescription == "Your session has expired.")
+    }
+
+    @Test("Simplified Chinese override")
+    func chinese() {
+        Rauthy.locale = Locale(identifier: "zh-Hans")
+        #expect(
+            RauthyError.networkUnavailable.localizedDescription
+                == "网络不可用,请检查网络连接后重试。"
+        )
+        #expect(RauthyError.userCancelled.localizedDescription == "登录已取消。")
+        #expect(RauthyError.tokenExpired.localizedDescription == "登录已过期。")
+    }
+
+    @Test("Japanese override")
+    func japanese() {
+        Rauthy.locale = Locale(identifier: "ja")
+        #expect(
+            RauthyError.networkUnavailable.localizedDescription
+                == "ネットワークに接続できません。接続を確認してもう一度お試しください。"
+        )
+        #expect(
+            RauthyError.userCancelled.localizedDescription
+                == "サインインがキャンセルされました。"
+        )
+        #expect(
+            RauthyError.tokenExpired.localizedDescription
+                == "セッションの有効期限が切れました。"
+        )
+    }
+
+    @Test("nested OAuth error delegates to inner code")
+    func oauthDelegation() {
+        Rauthy.locale = Locale(identifier: "zh-Hans")
+        let err = RauthyError.oauth(OAuthError(code: .accessDenied))
+        #expect(err.localizedDescription == "登录被拒绝。")
+    }
+
+    @Test("nested JWT failure delegates to inner case")
+    func jwtDelegation() {
+        Rauthy.locale = Locale(identifier: "ja")
+        let err = RauthyError.invalidJWT(.signatureInvalid)
+        #expect(err.localizedDescription == "ID トークンの署名が無効です。")
+    }
+
+    @Test("nested keychain error delegates to inner case")
+    func keychainDelegation() {
+        Rauthy.locale = Locale(identifier: "en")
+        let err = RauthyError.keychainError(.accessDenied)
+        #expect(err.localizedDescription == "Secure storage access was denied.")
+    }
+
+    @Test("server error embeds HTTP status code")
+    func serverErrorFormatting() {
+        Rauthy.locale = Locale(identifier: "en")
+        let err = RauthyError.server(ServerError(statusCode: 503))
+        #expect(err.localizedDescription == "The server returned an error (503).")
+
+        Rauthy.locale = Locale(identifier: "zh-Hans")
+        #expect(
+            RauthyError.server(ServerError(statusCode: 502)).localizedDescription
+                == "服务器返回错误(502)。"
+        )
+    }
+
+    @Test("keychain.osStatus embeds OSStatus code")
+    func keychainOSStatusFormatting() {
+        Rauthy.locale = Locale(identifier: "en")
+        let err = KeychainError.osStatus(-25300)
+        #expect(err.localizedDescription == "Secure storage error (-25300).")
+    }
+
+    @Test("unsupported locale falls back to English")
+    func fallbackToEnglish() {
+        // German isn't shipped — should fall through to the default bundle,
+        // which Bundle picks based on its default localization ("en").
+        Rauthy.locale = Locale(identifier: "de")
+        let desc = RauthyError.tokenExpired.localizedDescription
+        // Either the English string, or the German bundle returns key fallback.
+        // We don't assert exact equality to leave room for system preferences,
+        // but it must not be the raw key.
+        #expect(desc != "error.tokenExpired")
+        #expect(!desc.isEmpty)
+    }
+
+    @Test("locale is thread-safe to set from any context")
+    func threadSafeSet() async {
+        // Hammer the locale from multiple tasks; we only care that nothing crashes
+        // and the final state is observable.
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<20 {
+                group.addTask { Rauthy.locale = Locale(identifier: "en") }
+                group.addTask { Rauthy.locale = Locale(identifier: "zh-Hans") }
+                group.addTask { Rauthy.locale = Locale(identifier: "ja") }
+                group.addTask { _ = RauthyError.networkUnavailable.localizedDescription }
+            }
+        }
+        // Final settle: write a known value, verify it sticks.
+        Rauthy.locale = Locale(identifier: "ja")
+        #expect(
+            RauthyError.userCancelled.localizedDescription
+                == "サインインがキャンセルされました。"
+        )
+    }
+
+    @Test("supportedLocales lists what the SDK ships")
+    func supportedLocalesList() {
+        let identifiers = Rauthy.supportedLocales.map(\.identifier)
+        #expect(identifiers.contains("en"))
+        #expect(identifiers.contains("zh-Hans"))
+        #expect(identifiers.contains("ja"))
+    }
+}
