@@ -1,0 +1,1404 @@
+import Foundation
+import Testing
+import CryptoKit
+@testable import Rauthy
+
+// MARK: - JSONValue
+
+@Suite("JSONValue")
+struct JSONValueTests {
+    @Test("round-trips primitive values")
+    func roundTripsPrimitives() throws {
+        let values: [JSONValue] = [
+            .null,
+            .bool(true),
+            .bool(false),
+            .number(0),
+            .number(42.5),
+            .string(""),
+            .string("hello"),
+        ]
+        for value in values {
+            let data = try JSONEncoder().encode(value)
+            let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
+            #expect(decoded == value)
+        }
+    }
+
+    @Test("round-trips nested arrays and objects")
+    func roundTripsNested() throws {
+        let value: JSONValue = .object([
+            "name": .string("alice"),
+            "age": .number(30),
+            "roles": .array([.string("admin"), .string("user")]),
+            "active": .bool(true),
+            "metadata": .object(["last_seen": .null]),
+        ])
+        let data = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
+        #expect(decoded == value)
+    }
+}
+
+// MARK: - Claim & ClaimRule
+
+@Suite("ClaimRule")
+struct ClaimRuleTests {
+    @Test("Claim.matches by role and group")
+    func claimMatching() {
+        let role = Claim.role("admin")
+        let group = Claim.group("users")
+        #expect(role.matches(roles: ["admin"], groups: []))
+        #expect(!role.matches(roles: ["editor"], groups: []))
+        #expect(group.matches(roles: [], groups: ["users"]))
+        #expect(!group.matches(roles: ["users"], groups: []))
+    }
+
+    @Test("ClaimRule.any always matches")
+    func anyAlwaysMatches() {
+        let rule: ClaimRule = .any
+        #expect(rule.matches(roles: [], groups: []))
+        #expect(rule.matches(roles: ["any"], groups: ["thing"]))
+    }
+
+    @Test("ClaimRule.none never matches")
+    func noneNeverMatches() {
+        let rule: ClaimRule = .none
+        #expect(!rule.matches(roles: [], groups: []))
+        #expect(!rule.matches(roles: ["admin"], groups: ["ops"]))
+    }
+
+    @Test("ClaimRule.or matches when any claim matches")
+    func orSemantics() {
+        let rule: ClaimRule = .or([.role("admin"), .group("ops")])
+        #expect(rule.matches(roles: ["admin"], groups: []))
+        #expect(rule.matches(roles: [], groups: ["ops"]))
+        #expect(rule.matches(roles: ["admin"], groups: ["ops"]))
+        #expect(!rule.matches(roles: ["editor"], groups: ["dev"]))
+    }
+
+    @Test("ClaimRule.and requires all claims to match")
+    func andSemantics() {
+        let rule: ClaimRule = .and([.role("admin"), .group("ops")])
+        #expect(rule.matches(roles: ["admin"], groups: ["ops"]))
+        #expect(!rule.matches(roles: ["admin"], groups: []))
+        #expect(!rule.matches(roles: [], groups: ["ops"]))
+        #expect(!rule.matches(roles: ["editor"], groups: ["dev"]))
+    }
+
+    @Test("ClaimRule round-trips through JSON")
+    func roundTripsJSON() throws {
+        let rules: [ClaimRule] = [
+            .any,
+            .none,
+            .or([.role("admin")]),
+            .and([.role("admin"), .group("ops")]),
+        ]
+        for rule in rules {
+            let data = try JSONEncoder().encode(rule)
+            let decoded = try JSONDecoder().decode(ClaimRule.self, from: data)
+            #expect(decoded == rule)
+        }
+    }
+}
+
+// MARK: - Token
+
+@Suite("Token")
+struct TokenTests {
+    @Test("expiresAt = issuedAt + expiresIn")
+    func expiresAtComputed() {
+        let issuedAt = Date(timeIntervalSince1970: 1_000_000)
+        let token = makeToken(issuedAt: issuedAt, expiresIn: 3600)
+        #expect(token.expiresAt == issuedAt.addingTimeInterval(3600))
+    }
+
+    @Test("isExpired returns true for past tokens")
+    func isExpiredPast() {
+        let token = makeToken(issuedAt: Date(timeIntervalSinceNow: -7200), expiresIn: 3600)
+        #expect(token.isExpired())
+    }
+
+    @Test("isExpired returns false for fresh tokens")
+    func isExpiredFresh() {
+        let token = makeToken(issuedAt: Date(), expiresIn: 3600)
+        #expect(!token.isExpired())
+    }
+
+    @Test("isExpired respects graceInterval")
+    func isExpiredWithGrace() {
+        // Token expires in 30 seconds. With a 60-second grace, it should already be considered expired.
+        let token = makeToken(issuedAt: Date(), expiresIn: 30)
+        #expect(token.isExpired(graceInterval: 60))
+        #expect(!token.isExpired(graceInterval: 10))
+    }
+
+    @Test("Codable round-trip")
+    func roundTripsCodable() throws {
+        let original = makeToken(issuedAt: Date(timeIntervalSince1970: 1_700_000_000), expiresIn: 3600)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(Token.self, from: data)
+        #expect(decoded == original)
+    }
+
+    private func makeToken(issuedAt: Date, expiresIn: TimeInterval) -> Token {
+        Token(
+            id: UUID().uuidString,
+            accessToken: "fake-access-token",
+            refreshToken: "fake-refresh-token",
+            idToken: nil,
+            tokenType: .bearer,
+            scope: ["openid", "profile"],
+            issuedAt: issuedAt,
+            expiresIn: expiresIn
+        )
+    }
+}
+
+// MARK: - SigningAlgorithm
+
+@Suite("SigningAlgorithm")
+struct SigningAlgorithmTests {
+    @Test("raw values match JWT spec")
+    func rawValues() {
+        #expect(SigningAlgorithm.rs256.rawValue == "RS256")
+        #expect(SigningAlgorithm.rs384.rawValue == "RS384")
+        #expect(SigningAlgorithm.rs512.rawValue == "RS512")
+        #expect(SigningAlgorithm.eddsa.rawValue == "EdDSA")
+    }
+
+    @Test("all cases enumerable")
+    func allCases() {
+        #expect(SigningAlgorithm.allCases.count == 4)
+    }
+
+    @Test("does not include ES256")
+    func excludesES256() {
+        // Rauthy intentionally does not support ES256 (it's not in the JWK
+        // algorithm list). The SDK reflects this — see SigningAlgorithm.swift.
+        #expect(SigningAlgorithm(rawValue: "ES256") == nil)
+    }
+}
+
+// MARK: - User
+
+@Suite("User")
+struct UserTests {
+    @Test("init(idToken:) extracts claims")
+    func fromIDToken() {
+        let claims = IDTokenClaims(
+            sub: "user-123",
+            aud: ["my-app"],
+            iss: URL(string: "https://auth.example.com")!,
+            iat: Date(),
+            exp: Date(timeIntervalSinceNow: 3600),
+            email: "alice@example.com",
+            emailVerified: true,
+            preferredUsername: "alice",
+            roles: ["admin"],
+            groups: ["users", "ops"]
+        )
+        let idToken = IDToken(
+            raw: "fake.jwt.here",
+            header: JWTHeader(alg: .eddsa, typ: "JWT", kid: "key-1"),
+            payload: claims,
+            signature: Data()
+        )
+        let user = User(idToken: idToken)
+
+        #expect(user.id == "user-123")
+        #expect(user.subject == "user-123")
+        #expect(user.email == "alice@example.com")
+        #expect(user.emailVerified == true)
+        #expect(user.preferredUsername == "alice")
+        #expect(user.roles == ["admin"])
+        #expect(user.groups == ["users", "ops"])
+        #expect(user.mfaEnabled == nil)  // not in ID tokens
+    }
+
+    @Test("init(userInfoResponse:) decodes /userinfo JSON")
+    func fromUserInfo() throws {
+        let json = """
+        {
+            "id": "rauthy-uid-456",
+            "sub": "user-123",
+            "name": "Alice",
+            "email": "alice@example.com",
+            "email_verified": true,
+            "preferred_username": "alice",
+            "given_name": "Alice",
+            "family_name": "Example",
+            "roles": ["admin"],
+            "groups": ["users"],
+            "mfa_enabled": true
+        }
+        """.data(using: .utf8)!
+        let user = try User(userInfoResponse: json)
+
+        #expect(user.id == "rauthy-uid-456")
+        #expect(user.subject == "user-123")
+        #expect(user.email == "alice@example.com")
+        #expect(user.emailVerified == true)
+        #expect(user.givenName == "Alice")
+        #expect(user.familyName == "Example")
+        #expect(user.roles == ["admin"])
+        #expect(user.groups == ["users"])
+        #expect(user.mfaEnabled == true)
+    }
+}
+
+// MARK: - IDTokenClaims
+
+@Suite("IDTokenClaims")
+struct IDTokenClaimsTests {
+    @Test("decodes aud as array")
+    func audAsArray() throws {
+        let json = """
+        {
+            "sub": "user-1",
+            "aud": ["client-1", "client-2"],
+            "iss": "https://auth.example.com",
+            "iat": 1700000000,
+            "exp": 1700003600
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let claims = try decoder.decode(IDTokenClaims.self, from: json)
+        #expect(claims.aud == ["client-1", "client-2"])
+    }
+
+    @Test("decodes aud as single string")
+    func audAsString() throws {
+        let json = """
+        {
+            "sub": "user-1",
+            "aud": "client-1",
+            "iss": "https://auth.example.com",
+            "iat": 1700000000,
+            "exp": 1700003600
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let claims = try decoder.decode(IDTokenClaims.self, from: json)
+        #expect(claims.aud == ["client-1"])
+    }
+
+    @Test("missing aud throws")
+    func missingAudThrows() {
+        let json = """
+        {
+            "sub": "user-1",
+            "iss": "https://auth.example.com",
+            "iat": 1700000000,
+            "exp": 1700003600
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        #expect(throws: (any Error).self) {
+            try decoder.decode(IDTokenClaims.self, from: json)
+        }
+    }
+
+    @Test("roles and groups default to empty when absent")
+    func rolesGroupsDefault() throws {
+        let json = """
+        {
+            "sub": "user-1",
+            "aud": "client-1",
+            "iss": "https://auth.example.com",
+            "iat": 1700000000,
+            "exp": 1700003600
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let claims = try decoder.decode(IDTokenClaims.self, from: json)
+        #expect(claims.roles.isEmpty)
+        #expect(claims.groups.isEmpty)
+    }
+}
+
+// MARK: - RauthyError
+
+@Suite("RauthyError")
+struct RauthyErrorTests {
+    @Test("equality for nullary cases")
+    func equalityNullary() {
+        #expect(RauthyError.userCancelled == .userCancelled)
+        #expect(RauthyError.networkUnavailable == .networkUnavailable)
+        #expect(RauthyError.userCancelled != .networkUnavailable)
+    }
+
+    @Test("equality for cases with payload")
+    func equalityWithPayload() {
+        let a = RauthyError.sessionNotFound(id: "abc")
+        let b = RauthyError.sessionNotFound(id: "abc")
+        let c = RauthyError.sessionNotFound(id: "xyz")
+        #expect(a == b)
+        #expect(a != c)
+    }
+
+    @Test("invalidJWT carries failure reason")
+    func invalidJWTCarriesReason() {
+        let error = RauthyError.invalidJWT(.expired)
+        if case .invalidJWT(let reason) = error {
+            #expect(reason == .expired)
+        } else {
+            Issue.record("expected .invalidJWT case")
+        }
+    }
+}
+
+// MARK: - Base64URL
+
+@Suite("Base64URL")
+struct Base64URLTests {
+    @Test("round-trips arbitrary bytes")
+    func roundTrip() throws {
+        let inputs: [Data] = [
+            Data(),
+            Data([0x00]),
+            Data([0xFF, 0xFE, 0xFD]),
+            Data("hello".utf8),
+            Data(repeating: 0xAB, count: 32),
+        ]
+        for input in inputs {
+            let encoded = input.base64URLEncodedString()
+            #expect(!encoded.contains("+"))
+            #expect(!encoded.contains("/"))
+            #expect(!encoded.contains("="))
+            let decoded = try #require(Data(base64URLEncoded: encoded))
+            #expect(decoded == input)
+        }
+    }
+
+    @Test("decodes with or without padding")
+    func paddingTolerance() throws {
+        // "hello" base64 = "aGVsbG8=" (one = pad)
+        let withPad = Data(base64URLEncoded: "aGVsbG8=")
+        let withoutPad = Data(base64URLEncoded: "aGVsbG8")
+        #expect(withPad == Data("hello".utf8))
+        #expect(withoutPad == Data("hello".utf8))
+    }
+}
+
+// MARK: - PKCE
+
+@Suite("PKCE")
+struct PKCETests {
+    @Test("generates verifier of valid length")
+    func verifierLength() {
+        let pkce = PKCE()
+        // 32 random bytes → base64url = 43 chars (no padding)
+        #expect(pkce.codeVerifier.count == 43)
+    }
+
+    @Test("challenge is SHA-256 of verifier")
+    func challengeIsSHA256() {
+        let pkce = PKCE(codeVerifier: "test-verifier-12345")
+        let expected = Data(SHA256.hash(data: Data("test-verifier-12345".utf8)))
+            .base64URLEncodedString()
+        #expect(pkce.codeChallenge == expected)
+    }
+
+    @Test("challenge method is always S256")
+    func methodIsS256() {
+        #expect(PKCE().codeChallengeMethod == "S256")
+    }
+
+    @Test("two PKCE instances differ")
+    func uniquenessAcrossInstances() {
+        let a = PKCE()
+        let b = PKCE()
+        #expect(a.codeVerifier != b.codeVerifier)
+        #expect(a.codeChallenge != b.codeChallenge)
+    }
+
+    @Test("verifier characters are URL-safe base64")
+    func verifierCharacterSet() {
+        let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        let pkce = PKCE()
+        for char in pkce.codeVerifier {
+            #expect(allowed.contains(char))
+        }
+    }
+}
+
+// MARK: - JWTDecoder
+
+@Suite("JWTDecoder")
+struct JWTDecoderTests {
+    @Test("rejects token with wrong segment count")
+    func rejectsBadStructure() {
+        #expect(throws: RauthyError.self) {
+            try JWTDecoder.decode("only.two")
+        }
+        #expect(throws: RauthyError.self) {
+            try JWTDecoder.decode("a.b.c.d")
+        }
+    }
+
+    @Test("rejects non-base64url segments")
+    func rejectsBadEncoding() {
+        // "!!!" is not valid base64url
+        #expect(throws: RauthyError.self) {
+            try JWTDecoder.decode("!!!.!!!.!!!")
+        }
+    }
+
+    @Test("decodes valid JWT segments")
+    func decodesValid() throws {
+        let header = Data(#"{"alg":"EdDSA","typ":"JWT"}"#.utf8)
+        let payload = Data(#"{"sub":"abc","exp":1700003600}"#.utf8)
+        let signature = Data([0x01, 0x02, 0x03])
+
+        let token = [header, payload, signature]
+            .map { $0.base64URLEncodedString() }
+            .joined(separator: ".")
+
+        let parts = try JWTDecoder.decode(token)
+        #expect(parts.headerBytes == header)
+        #expect(parts.payloadBytes == payload)
+        #expect(parts.signature == signature)
+    }
+}
+
+// MARK: - AuthorizationURLBuilder
+
+@Suite("AuthorizationURLBuilder")
+struct AuthorizationURLBuilderTests {
+    @Test("builds /authorize URL with all required parameters")
+    func buildAuthorizeURL() {
+        let config = RauthyConfig.production(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://cb")!,
+            scopes: ["openid", "profile"],
+            userClaim: .any,
+            adminClaim: .none
+        )
+        let discovery = makeDiscovery()
+        let pkce = PKCE(codeVerifier: "test-verifier")
+        let url = AuthorizationURLBuilder.build(
+            config: config,
+            discovery: discovery,
+            state: "state-abc",
+            nonce: "nonce-xyz",
+            pkce: pkce
+        )
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        let items = Dictionary(uniqueKeysWithValues: components.queryItems!.compactMap { item -> (String, String)? in
+            guard let value = item.value else { return nil }
+            return (item.name, value)
+        })
+        #expect(items["response_type"] == "code")
+        #expect(items["client_id"] == "my-app")
+        #expect(items["redirect_uri"] == "myapp://cb")
+        #expect(items["scope"] == "openid profile")
+        #expect(items["state"] == "state-abc")
+        #expect(items["nonce"] == "nonce-xyz")
+        #expect(items["code_challenge"] == pkce.codeChallenge)
+        #expect(items["code_challenge_method"] == "S256")
+    }
+
+    @Test("parses callback with code and state")
+    func parsesCallback() throws {
+        let url = URL(string: "myapp://cb?code=abc&state=xyz")!
+        let (code, state) = try AuthorizationURLBuilder.parseCallback(url)
+        #expect(code == "abc")
+        #expect(state == "xyz")
+    }
+
+    @Test("parses callback error response")
+    func parsesError() {
+        let url = URL(string: "myapp://cb?error=access_denied&error_description=user%20said%20no")!
+        do {
+            _ = try AuthorizationURLBuilder.parseCallback(url)
+            Issue.record("expected throw")
+        } catch RauthyError.oauth(let err) {
+            #expect(err.code == .accessDenied)
+            #expect(err.description == "user said no")
+        } catch {
+            Issue.record("expected RauthyError.oauth, got \(error)")
+        }
+    }
+
+    @Test("random tokens are non-empty and unique")
+    func randomToken() {
+        let a = AuthorizationURLBuilder.randomToken()
+        let b = AuthorizationURLBuilder.randomToken()
+        #expect(!a.isEmpty)
+        #expect(a != b)
+    }
+
+    private func makeDiscovery() -> OpenIDConfiguration {
+        OpenIDConfiguration(
+            issuer: URL(string: "https://auth.example.com")!,
+            authorizationEndpoint: URL(string: "https://auth.example.com/authorize")!,
+            tokenEndpoint: URL(string: "https://auth.example.com/token")!,
+            jwksURI: URL(string: "https://auth.example.com/jwks")!
+        )
+    }
+}
+
+// MARK: - OIDCDiscovery URL builder
+
+@Suite("OIDCDiscovery")
+struct OIDCDiscoveryTests {
+    @Test("discovery URL appends well-known path")
+    func discoveryURL() {
+        let urls: [(input: String, expected: String)] = [
+            ("https://auth.example.com", "https://auth.example.com/.well-known/openid-configuration"),
+            ("https://auth.example.com/", "https://auth.example.com/.well-known/openid-configuration"),
+            ("https://auth.example.com/auth/v1", "https://auth.example.com/auth/v1/.well-known/openid-configuration"),
+        ]
+        for (input, expected) in urls {
+            let computed = OIDCDiscovery.discoveryURL(for: URL(string: input)!)
+            #expect(computed.absoluteString == expected)
+        }
+    }
+}
+
+// MARK: - JWTSignatureValidator
+
+@Suite("JWTSignatureValidator")
+struct JWTSignatureValidatorTests {
+    @Test("accepts valid Ed25519 signature")
+    func acceptsValidEd25519() throws {
+        let (privateKey, jwk) = makeEd25519KeyAndJWK()
+        let parts = signedParts(privateKey: privateKey, payload: "test-payload")
+        try JWTSignatureValidator.validate(parts: parts, algorithm: .eddsa, jwk: jwk)
+    }
+
+    @Test("rejects tampered signature")
+    func rejectsTamperedSignature() throws {
+        let (privateKey, jwk) = makeEd25519KeyAndJWK()
+        var parts = signedParts(privateKey: privateKey, payload: "test-payload")
+        // Flip a byte of the signature
+        var tampered = parts.signature
+        tampered[0] ^= 0xFF
+        parts = JWTDecoder.Parts(
+            headerBytes: parts.headerBytes,
+            payloadBytes: parts.payloadBytes,
+            signature: tampered,
+            signedInput: parts.signedInput
+        )
+        #expect(throws: RauthyError.self) {
+            try JWTSignatureValidator.validate(parts: parts, algorithm: .eddsa, jwk: jwk)
+        }
+    }
+
+    @Test("rejects RSA algorithms in v0.1")
+    func rejectsRSA() throws {
+        let (_, jwk) = makeEd25519KeyAndJWK()
+        let parts = JWTDecoder.Parts(
+            headerBytes: Data(),
+            payloadBytes: Data(),
+            signature: Data(),
+            signedInput: ""
+        )
+        #expect(throws: RauthyError.self) {
+            try JWTSignatureValidator.validate(parts: parts, algorithm: .rs256, jwk: jwk)
+        }
+    }
+
+    private func makeEd25519KeyAndJWK() -> (Curve25519.Signing.PrivateKey, JWK) {
+        let privateKey = Curve25519.Signing.PrivateKey()
+        let publicKey = privateKey.publicKey
+        let xValue = publicKey.rawRepresentation.base64URLEncodedString()
+        let jwk = JWK(
+            kty: "OKP",
+            alg: .eddsa,
+            kid: "test-kid",
+            crv: "Ed25519",
+            x: xValue
+        )
+        return (privateKey, jwk)
+    }
+
+    private func signedParts(
+        privateKey: Curve25519.Signing.PrivateKey,
+        payload: String
+    ) -> JWTDecoder.Parts {
+        let header = Data(#"{"alg":"EdDSA","typ":"JWT","kid":"test-kid"}"#.utf8)
+        let payloadData = Data(payload.utf8)
+        let headerSegment = header.base64URLEncodedString()
+        let payloadSegment = payloadData.base64URLEncodedString()
+        let signedInput = "\(headerSegment).\(payloadSegment)"
+        let signature = try! privateKey.signature(for: Data(signedInput.utf8))
+        return JWTDecoder.Parts(
+            headerBytes: header,
+            payloadBytes: payloadData,
+            signature: signature,
+            signedInput: signedInput
+        )
+    }
+}
+
+// MARK: - JWTClaimsValidator
+
+@Suite("JWTClaimsValidator")
+struct JWTClaimsValidatorTests {
+    @Test("accepts valid claims")
+    func acceptsValid() throws {
+        let context = makeContext()
+        let idToken = makeIDToken()
+        try JWTClaimsValidator.validate(idToken, against: context, now: now)
+    }
+
+    @Test("rejects wrong issuer")
+    func wrongIssuer() {
+        let context = makeContext()
+        let idToken = makeIDToken(iss: URL(string: "https://different.example.com")!)
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.wrongIssuer) {
+            // ok
+        } catch {
+            Issue.record("expected wrongIssuer, got \(error)")
+        }
+    }
+
+    @Test("rejects wrong audience")
+    func wrongAudience() {
+        let context = makeContext()
+        let idToken = makeIDToken(aud: ["someone-else"])
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.wrongAudience) {
+            // ok
+        } catch {
+            Issue.record("expected wrongAudience, got \(error)")
+        }
+    }
+
+    @Test("rejects expired token")
+    func expiredToken() {
+        let context = makeContext()
+        let idToken = makeIDToken(exp: now.addingTimeInterval(-3600))
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.expired) {
+            // ok
+        } catch {
+            Issue.record("expected expired, got \(error)")
+        }
+    }
+
+    @Test("rejects missing nonce when one expected")
+    func missingNonce() {
+        let context = makeContext(nonce: "expected-nonce")
+        let idToken = makeIDToken(nonce: nil)
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.missingNonce) {
+            // ok
+        } catch {
+            Issue.record("expected missingNonce, got \(error)")
+        }
+    }
+
+    @Test("rejects mismatched nonce")
+    func mismatchedNonce() {
+        let context = makeContext(nonce: "expected-nonce")
+        let idToken = makeIDToken(nonce: "wrong-nonce")
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.nonceMismatch) {
+            // ok
+        } catch {
+            Issue.record("expected nonceMismatch, got \(error)")
+        }
+    }
+
+    @Test("rejects unverified email when required")
+    func unverifiedEmail() {
+        let context = makeContext(requireVerifiedEmail: true)
+        let idToken = makeIDToken(emailVerified: false)
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.emailNotVerified) {
+            // ok
+        } catch {
+            Issue.record("expected emailNotVerified, got \(error)")
+        }
+    }
+
+    @Test("rejects wrong algorithm")
+    func wrongAlgorithm() {
+        let context = makeContext(allowedAlgorithms: [.rs256])
+        let idToken = makeIDToken()
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.wrongAlgorithm) {
+            // ok
+        } catch {
+            Issue.record("expected wrongAlgorithm, got \(error)")
+        }
+    }
+
+    // MARK: helpers
+
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    private func makeContext(
+        nonce: String? = nil,
+        requireVerifiedEmail: Bool = false,
+        allowedAlgorithms: Set<SigningAlgorithm> = [.eddsa]
+    ) -> JWTClaimsValidator.Context {
+        JWTClaimsValidator.Context(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            nonce: nonce,
+            requireVerifiedEmail: requireVerifiedEmail,
+            allowedAlgorithms: allowedAlgorithms
+        )
+    }
+
+    private func makeIDToken(
+        iss: URL = URL(string: "https://auth.example.com")!,
+        aud: [String] = ["my-app"],
+        exp: Date = Date(timeIntervalSince1970: 1_700_003_600),
+        nonce: String? = nil,
+        emailVerified: Bool? = nil,
+        alg: SigningAlgorithm = .eddsa
+    ) -> IDToken {
+        let claims = IDTokenClaims(
+            sub: "user-123",
+            aud: aud,
+            iss: iss,
+            iat: Date(timeIntervalSince1970: 1_700_000_000),
+            exp: exp,
+            nonce: nonce,
+            email: emailVerified != nil ? "user@example.com" : nil,
+            emailVerified: emailVerified
+        )
+        return IDToken(
+            raw: "header.payload.signature",
+            header: JWTHeader(alg: alg, typ: "JWT", kid: "test-kid"),
+            payload: claims,
+            signature: Data()
+        )
+    }
+}
+
+// MARK: - InMemoryStorage round-trip
+
+@Suite("InMemoryStorage")
+struct InMemoryStorageTests {
+    @Test("save then load returns same token")
+    func saveLoad() async throws {
+        let storage = InMemoryStorage()
+        let token = makeToken()
+        try await storage.save(token)
+        let loaded = try await storage.load()
+        #expect(loaded == token)
+    }
+
+    @Test("load on empty storage returns nil")
+    func loadEmpty() async throws {
+        let storage = InMemoryStorage()
+        let loaded = try await storage.load()
+        #expect(loaded == nil)
+    }
+
+    @Test("clear removes stored token")
+    func clear() async throws {
+        let storage = InMemoryStorage()
+        try await storage.save(makeToken())
+        try await storage.clear()
+        let loaded = try await storage.load()
+        #expect(loaded == nil)
+    }
+
+    private func makeToken() -> Token {
+        Token(
+            id: UUID().uuidString,
+            accessToken: "access-token",
+            refreshToken: nil,
+            idToken: nil,
+            tokenType: .bearer,
+            scope: ["openid"],
+            issuedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            expiresIn: 3600
+        )
+    }
+}
+
+// MARK: - URLProtocol mock for wire-level tests
+
+/// Test-only URLProtocol that lets each test specify how to handle the
+/// incoming request and what response to send back.
+///
+/// Usage:
+///   let config = URLSessionConfiguration.ephemeral
+///   config.protocolClasses = [MockURLProtocol.self]
+///   let session = URLSession(configuration: config)
+///   MockURLProtocol.handler = { request in
+///       let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+///       return (response, Data("{}".utf8))
+///   }
+final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+/// Helpers shared across wire tests.
+enum WireTestHelpers {
+    static func makeMockSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    static func makeDiscovery(
+        issuer: String = "https://auth.example.com",
+        includeUserinfo: Bool = true,
+        includeRevocation: Bool = true
+    ) -> OpenIDConfiguration {
+        OpenIDConfiguration(
+            issuer: URL(string: issuer)!,
+            authorizationEndpoint: URL(string: "\(issuer)/authorize")!,
+            tokenEndpoint: URL(string: "\(issuer)/token")!,
+            userinfoEndpoint: includeUserinfo ? URL(string: "\(issuer)/userinfo")! : nil,
+            jwksURI: URL(string: "\(issuer)/jwks")!,
+            revocationEndpoint: includeRevocation ? URL(string: "\(issuer)/revoke")! : nil
+        )
+    }
+
+    static func makeConfig() -> RauthyConfig {
+        .production(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://cb")!,
+            userClaim: .any,
+            adminClaim: .none
+        )
+    }
+
+    static func makeToken(refreshToken: String? = "rt-123", expiresIn: TimeInterval = 3600) -> Token {
+        Token(
+            id: UUID().uuidString,
+            accessToken: "at-old",
+            refreshToken: refreshToken,
+            idToken: nil,
+            tokenType: .bearer,
+            scope: ["openid"],
+            issuedAt: Date(),
+            expiresIn: expiresIn
+        )
+    }
+
+    /// URLSession moves `httpBody` to `httpBodyStream` before URLProtocol sees
+    /// the request, so we have to read the stream to get the body bytes back.
+    static func bodyData(from request: URLRequest) -> Data {
+        if let body = request.httpBody {
+            return body
+        }
+        guard let stream = request.httpBodyStream else {
+            return Data()
+        }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read > 0 {
+                data.append(buffer, count: read)
+            } else {
+                break
+            }
+        }
+        return data
+    }
+
+    static func formBody(from request: URLRequest) -> [String: String] {
+        let body = String(data: bodyData(from: request), encoding: .utf8) ?? ""
+        var items: [String: String] = [:]
+        for pair in body.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            items[parts[0]] = parts[1].removingPercentEncoding ?? parts[1]
+        }
+        return items
+    }
+}
+
+// MARK: - Wire-level tests
+//
+// Wrapped in a single parent suite with `.serialized` so the shared
+// MockURLProtocol.handler global isn't trampled by parallel tests.
+
+@Suite("Wire", .serialized)
+enum WireTests {
+
+@Suite("TokenExchange.refresh")
+struct TokenRefreshWireTests {
+    @Test("sends grant_type=refresh_token and refresh_token in form body")
+    func sendsCorrectRequest() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let discovery = WireTestHelpers.makeDiscovery()
+
+        nonisolated(unsafe) var capturedRequest: URLRequest?
+        MockURLProtocol.handler = { request in
+            capturedRequest = request
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let body = #"""
+            {
+                "access_token": "at-new",
+                "refresh_token": "rt-new",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": "openid profile"
+            }
+            """#
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let token = try await TokenExchange.refresh(
+            refreshToken: "rt-original",
+            config: config,
+            discovery: discovery,
+            session: session
+        )
+
+        let req = try #require(capturedRequest)
+        #expect(req.url == discovery.tokenEndpoint)
+        #expect(req.httpMethod == "POST")
+        let form = WireTestHelpers.formBody(from: req)
+        #expect(form["grant_type"] == "refresh_token")
+        #expect(form["refresh_token"] == "rt-original")
+        #expect(form["client_id"] == "my-app")
+
+        #expect(token.accessToken == "at-new")
+        #expect(token.refreshToken == "rt-new")
+        #expect(token.expiresIn == 3600)
+    }
+
+    @Test("decodes server-side OAuth error on 400")
+    func decodesOAuthError() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let discovery = WireTestHelpers.makeDiscovery()
+
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
+            let body = Data(#"{"error":"invalid_grant","error_description":"refresh token expired"}"#.utf8)
+            return (response, body)
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        do {
+            _ = try await TokenExchange.refresh(
+                refreshToken: "rt-expired",
+                config: config,
+                discovery: discovery,
+                session: session
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.oauth(let err) {
+            #expect(err.code == .invalidGrant)
+            #expect(err.description == "refresh token expired")
+        } catch {
+            Issue.record("expected RauthyError.oauth, got \(error)")
+        }
+    }
+}
+
+// MARK: - TokenRevocation wire tests
+
+@Suite("TokenRevocation")
+struct TokenRevocationWireTests {
+    @Test("POSTs token + token_type_hint=refresh_token")
+    func revokesRefreshToken() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let discovery = WireTestHelpers.makeDiscovery()
+        let token = WireTestHelpers.makeToken(refreshToken: "rt-to-revoke")
+
+        nonisolated(unsafe) var capturedRequest: URLRequest?
+        MockURLProtocol.handler = { request in
+            capturedRequest = request
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        try await TokenRevocation.revoke(
+            token: token,
+            config: config,
+            discovery: discovery,
+            session: session
+        )
+
+        let req = try #require(capturedRequest)
+        #expect(req.url == discovery.revocationEndpoint)
+        #expect(req.httpMethod == "POST")
+        let form = WireTestHelpers.formBody(from: req)
+        #expect(form["token"] == "rt-to-revoke")
+        #expect(form["token_type_hint"] == "refresh_token")
+        #expect(form["client_id"] == "my-app")
+    }
+
+    @Test("falls back to access_token hint when no refresh token")
+    func revokesAccessTokenFallback() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let discovery = WireTestHelpers.makeDiscovery()
+        let token = WireTestHelpers.makeToken(refreshToken: nil)
+
+        nonisolated(unsafe) var capturedRequest: URLRequest?
+        MockURLProtocol.handler = { request in
+            capturedRequest = request
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        try await TokenRevocation.revoke(
+            token: token,
+            config: config,
+            discovery: discovery,
+            session: session
+        )
+
+        let form = WireTestHelpers.formBody(from: try #require(capturedRequest))
+        #expect(form["token"] == "at-old")
+        #expect(form["token_type_hint"] == "access_token")
+    }
+
+    @Test("throws when discovery has no revocation_endpoint")
+    func throwsWhenNoEndpoint() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let discovery = WireTestHelpers.makeDiscovery(includeRevocation: false)
+        let token = WireTestHelpers.makeToken()
+
+        await #expect(throws: RauthyError.self) {
+            try await TokenRevocation.revoke(
+                token: token,
+                config: config,
+                discovery: discovery,
+                session: session
+            )
+        }
+    }
+}
+
+// MARK: - RauthyClient fetchUser wire tests
+
+@Suite("RauthyClient.fetchUser")
+struct FetchUserWireTests {
+    @Test("sends Bearer auth header and parses User response")
+    func fetchesUser() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        nonisolated(unsafe) var capturedRequest: URLRequest?
+        MockURLProtocol.handler = { request in
+            capturedRequest = request
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "userinfo_endpoint": "https://auth.example.com/userinfo",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            // userinfo
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+                "id": "rauthy-uid",
+                "sub": "user-123",
+                "name": "Alice",
+                "email": "alice@example.com",
+                "email_verified": true,
+                "roles": ["admin"],
+                "mfa_enabled": true
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        let token = WireTestHelpers.makeToken()
+        try await storage.save(token)
+
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        let user = try await client.fetchUser()
+
+        #expect(user.id == "rauthy-uid")
+        #expect(user.subject == "user-123")
+        #expect(user.email == "alice@example.com")
+        #expect(user.mfaEnabled == true)
+
+        let lastReq = try #require(capturedRequest)
+        #expect(lastReq.value(forHTTPHeaderField: "Authorization")?.starts(with: "Bearer ") == true)
+    }
+
+    @Test("401 from /userinfo throws reauthenticationRequired")
+    func unauthorizedThrowsReauth() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "userinfo_endpoint": "https://auth.example.com/userinfo",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeToken())
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+
+        do {
+            _ = try await client.fetchUser()
+            Issue.record("expected throw")
+        } catch RauthyError.reauthenticationRequired {
+            // ok
+        } catch {
+            Issue.record("expected reauthenticationRequired, got \(error)")
+        }
+    }
+}
+
+// MARK: - RauthyClient auto-refresh
+
+@Suite("RauthyClient auto-refresh")
+struct AutoRefreshTests {
+    @Test("validAccessToken auto-refreshes an expired token")
+    func autoRefresh() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        nonisolated(unsafe) var tokenEndpointCalls = 0
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            // token endpoint
+            tokenEndpointCalls += 1
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = #"""
+            {
+                "access_token": "at-fresh",
+                "refresh_token": "rt-rotated",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }
+            """#
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        let expiredToken = Token(
+            id: UUID().uuidString,
+            accessToken: "at-stale",
+            refreshToken: "rt-original",
+            idToken: nil,
+            tokenType: .bearer,
+            scope: ["openid"],
+            issuedAt: Date().addingTimeInterval(-7200),
+            expiresIn: 3600
+        )
+        try await storage.save(expiredToken)
+
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        let accessToken = try await client.validAccessToken()
+
+        #expect(accessToken == "at-fresh")
+        #expect(tokenEndpointCalls == 1)
+
+        // Storage should now have the new token.
+        let stored = try await storage.load()
+        #expect(stored?.accessToken == "at-fresh")
+        #expect(stored?.refreshToken == "rt-rotated")
+    }
+
+    @Test("refreshSession returns new token without checking expiry")
+    func explicitRefresh() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = #"""
+            {
+                "access_token": "at-forced",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }
+            """#
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        let freshToken = WireTestHelpers.makeToken(expiresIn: 3600)
+        try await storage.save(freshToken)
+
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        let refreshed = try await client.refreshSession()
+        #expect(refreshed.accessToken == "at-forced")
+    }
+
+    @Test("invalid_grant during refresh clears storage and throws reauthenticationRequired")
+    func invalidGrantClearsStorage() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
+            let body = Data(#"{"error":"invalid_grant"}"#.utf8)
+            return (response, body)
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeToken())
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+
+        do {
+            _ = try await client.refreshSession()
+            Issue.record("expected throw")
+        } catch RauthyError.reauthenticationRequired {
+            // Storage should be cleared.
+            let after = try await storage.load()
+            #expect(after == nil)
+        } catch {
+            Issue.record("expected reauthenticationRequired, got \(error)")
+        }
+    }
+}
+
+}  // end of WireTests parent suite
+
+// MARK: - RauthyConfig
+
+@Suite("RauthyConfig")
+struct RauthyConfigTests {
+    @Test("production factory sets sensible defaults")
+    func productionDefaults() {
+        let config = RauthyConfig.production(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://cb")!,
+            userClaim: .or([.group("users")]),
+            adminClaim: .or([.role("admin")])
+        )
+        #expect(config.requireVerifiedEmail == true)
+        #expect(config.scopes == ["openid", "profile", "email"])
+        #expect(config.localDev == nil)
+        #expect(config.allowedAlgorithms == Set(SigningAlgorithm.allCases))
+    }
+
+    @Test("development factory enables local dev mode")
+    func developmentDefaults() {
+        let config = RauthyConfig.development(
+            redirectURI: URL(string: "myapp://cb")!
+        )
+        #expect(config.localDev != nil)
+        #expect(config.localDev?.allowInsecureHTTP == true)
+        #expect(config.requireVerifiedEmail == false)
+        #expect(config.userClaim == .any)
+        #expect(config.adminClaim == .none)
+    }
+}

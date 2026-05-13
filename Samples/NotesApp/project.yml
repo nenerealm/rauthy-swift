@@ -1,0 +1,65 @@
+# xcodegen spec for the NotesApp sample.
+#
+# Usage:
+#   brew install xcodegen
+#   xcodegen generate
+#   open NotesApp.xcodeproj
+#
+# This is the easy path. The hard path (manual Xcode project creation) is
+# described in SETUP.md.
+
+name: NotesApp
+
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: en
+  groupOrdering:
+    - order:
+        - NotesApp
+
+targets:
+  NotesApp:
+    type: application
+    platform: iOS
+    sources:
+      - NotesApp
+    info:
+      path: NotesApp/Info.plist
+      properties:
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        CFBundleURLTypes:
+          - CFBundleURLName: com.example.notesapp.callback
+            CFBundleURLSchemes:
+              - notesapp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.notesapp
+        PRODUCT_NAME: NotesApp
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        GENERATE_INFOPLIST_FILE: "NO"
+        ENABLE_PREVIEWS: "YES"
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: Rauthy
+        product: Rauthy
+
+packages:
+  Rauthy:
+    path: ../..
