@@ -67,6 +67,61 @@ public struct AccountAPI: Sendable {
         try await client.performRevokeDevice(deviceID: id, name: nil)
     }
 
+    /// Rename a device. Subject to Rauthy's name regex (2-128 chars,
+    /// alphanumeric + a small punctuation set).
+    public func renameDevice(_ device: Device, to newName: String) async throws {
+        try await client.performRenameDevice(deviceID: device.id, newName: newName)
+    }
+
+    /// Rename a device by ID.
+    public func renameDevice(id: String, to newName: String) async throws {
+        try await client.performRenameDevice(deviceID: id, newName: newName)
+    }
+
+    // MARK: - Avatar
+
+    /// Upload a new avatar image. Replaces any existing avatar.
+    ///
+    /// Rauthy auto-converts to WebP and resizes to its configured max
+    /// dimension (default 192x192). Acceptable inputs include JPEG, PNG,
+    /// WebP, and SVG (SVG gets sanitized server-side).
+    ///
+    /// - Parameters:
+    ///   - imageData: Raw image bytes.
+    ///   - mimeType: Required. Common values: `"image/jpeg"`, `"image/png"`,
+    ///     `"image/webp"`, `"image/svg+xml"`.
+    /// - Returns: The new picture ID, which you can compose into the
+    ///   picture-download URL via ``pictureURL(pictureID:mimeType:)``.
+    @discardableResult
+    public func uploadAvatar(_ imageData: Data, mimeType: String) async throws -> String {
+        try await client.performUploadAvatar(imageData: imageData, mimeType: mimeType)
+    }
+
+    /// Delete an avatar by its picture ID.
+    public func deleteAvatar(pictureID: String) async throws {
+        try await client.performDeleteAvatar(pictureID: pictureID)
+    }
+
+    /// Build the URL for downloading an avatar. Use with `AsyncImage` or
+    /// `URLSession` — the image is publicly fetchable (no auth header needed).
+    public func pictureURL(userID: String, pictureID: String) -> URL {
+        client.pictureURL(userID: userID, pictureID: pictureID)
+    }
+
+    // MARK: - Passkey conversion
+
+    /// Convert the account to passkey-only authentication. After this,
+    /// the user can no longer sign in with their password — only with a
+    /// registered passkey. **Requires at least one passkey to already be
+    /// registered** (use ``PasskeyAPI/register(named:anchor:)`` first).
+    ///
+    /// One-way operation: once converted, the password is stripped from
+    /// the database. Rauthy may offer a "revert" path through the account
+    /// dashboard, but the SDK doesn't expose it.
+    public func convertToPasskeyOnly() async throws {
+        try await client.performConvertToPasskeyOnly()
+    }
+
     // MARK: - Account deletion
 
     /// Check whether self-deletion is enabled for this user.

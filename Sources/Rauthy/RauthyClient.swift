@@ -11,7 +11,10 @@ import Logging
 /// Construct once per Rauthy issuer per app lifetime. Holds an actor's worth
 /// of mutable state — safe to access concurrently from any task.
 public actor RauthyClient {
-    public let config: RauthyConfig
+    /// `config` never changes after construction; readable without awaiting
+    /// the actor so synchronous URL builders (avatar URL, account dashboard
+    /// URL) can use it from any context.
+    public nonisolated let config: RauthyConfig
     internal let storage: any SessionStorage
     internal let urlSession: URLSession
 

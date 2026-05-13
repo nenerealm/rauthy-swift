@@ -1,10 +1,12 @@
-#if canImport(SwiftUI) && canImport(UIKit) && canImport(AuthenticationServices)
+#if canImport(SwiftUI) && canImport(AuthenticationServices)
 import SwiftUI
-import UIKit
 import AuthenticationServices
 
+#if canImport(UIKit)
+import UIKit
+
 public extension View {
-    /// Capture the host `UIWindow` so `RauthyClient.signIn(anchor:)` can
+    /// Capture the host window so `RauthyClient.signIn(anchor:)` can
     /// find it without the caller having to plumb it through view state.
     ///
     /// Apply once at your app's root, next to `.environmentObject(authState)`:
@@ -14,12 +16,10 @@ public extension View {
     ///     .rauthyPresentationContext()
     /// ```
     ///
-    /// Internally, this places a zero-sized UIView in the background that
-    /// hooks `didMoveToWindow` to publish the window into the SDK's
-    /// internal holder. Calling `auth.signIn()` then "just works."
-    ///
-    /// v1.0 will extend this to macOS via `NSWindow`. For now, UIKit
-    /// platforms only (iOS, tvOS, visionOS, Mac Catalyst).
+    /// Internally, this places a zero-sized view in the background that
+    /// hooks `didMoveToWindow` (UIKit) or `viewDidMoveToWindow` (AppKit)
+    /// to publish the host window into the SDK's internal holder. Calling
+    /// `auth.signIn()` then "just works."
     func rauthyPresentationContext() -> some View {
         background(RauthyWindowProbe().frame(width: 0, height: 0))
     }
@@ -31,7 +31,6 @@ private struct RauthyWindowProbe: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        // Re-publish whenever the host re-runs `updateUIView`.
         if let window = uiView.window {
             DispatchQueue.main.async {
                 CurrentWindowHolder.shared.window = window
@@ -48,4 +47,40 @@ private final class ProbeView: UIView {
         }
     }
 }
+
+#elseif canImport(AppKit)
+import AppKit
+
+public extension View {
+    /// macOS variant — captures the host `NSWindow` via `NSViewRepresentable`.
+    /// Same semantics as the iOS version.
+    func rauthyPresentationContext() -> some View {
+        background(RauthyMacWindowProbe().frame(width: 0, height: 0))
+    }
+}
+
+private struct RauthyMacWindowProbe: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        ProbeView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window {
+            DispatchQueue.main.async {
+                CurrentWindowHolder.shared.window = window
+            }
+        }
+    }
+}
+
+private final class ProbeView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let window = self.window {
+            CurrentWindowHolder.shared.window = window
+        }
+    }
+}
+
+#endif
 #endif

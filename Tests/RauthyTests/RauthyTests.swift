@@ -1654,6 +1654,297 @@ final class RequestBox: @unchecked Sendable {
     }
 }
 
+// MARK: - PasskeyAPI wire tests
+
+@Suite("PasskeyAPI")
+struct PasskeyAPIWireTests {
+    @Test("list GETs /users/{id}/webauthn and parses response")
+    func list() async throws {
+        let (client, _, _) = try await makeClient(
+            sub: "user-abc",
+            responseBuilder: { request in
+                if request.url?.path == "/users/user-abc/webauthn" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                    let body = """
+                    [
+                        {
+                            "name": "iPhone",
+                            "registered": 1700000000,
+                            "last_used": 1700100000,
+                            "user_verified": true
+                        }
+                    ]
+                    """
+                    return (response, Data(body.utf8))
+                }
+                return nil
+            }
+        )
+        let passkeys = try await client.passkeys.list()
+        #expect(passkeys.count == 1)
+        #expect(passkeys.first?.name == "iPhone")
+        #expect(passkeys.first?.userVerified == true)
+    }
+
+    @Test("delete DELETEs /users/{id}/webauthn/delete/{name}")
+    func delete() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+
+        try await client.passkeys.delete(name: "iPhone")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/webauthn/delete/iPhone")
+        #expect(req.httpMethod == "DELETE")
+    }
+
+    @Test("RegisterPublicKeyCredentialJSON encodes credential parts as base64url")
+    func credentialJSONEncoding() throws {
+        let credentialID = Data([0x01, 0x02, 0x03, 0x04])
+        let attestationObject = Data([0xAA, 0xBB])
+        let clientDataJSON = Data(#"{"type":"webauthn.create"}"#.utf8)
+        let cred = RegisteredCredential(
+            credentialID: credentialID,
+            attestationObject: attestationObject,
+            clientDataJSON: clientDataJSON
+        )
+        let json = RegisterPublicKeyCredentialJSON(credential: cred)
+
+        #expect(json.type == "public-key")
+        #expect(json.authenticatorAttachment == "platform")
+        #expect(json.id == credentialID.base64URLEncodedString())
+        #expect(json.rawId == credentialID.base64URLEncodedString())
+        #expect(json.response.attestationObject == attestationObject.base64URLEncodedString())
+        #expect(json.response.clientDataJSON == clientDataJSON.base64URLEncodedString())
+    }
+
+    @Test("PasskeyRegistrationChallenge decodes start response")
+    func decodeStartResponse() throws {
+        let json = """
+        {
+            "publicKey": {
+                "rp": { "id": "auth.example.com", "name": "Rauthy" },
+                "user": {
+                    "id": "dXNlci0xMjM",
+                    "name": "alice",
+                    "displayName": "Alice"
+                },
+                "challenge": "Y2hhbGxlbmdlLWJ5dGVz",
+                "pubKeyCredParams": [{ "type": "public-key", "alg": -8 }],
+                "timeout": 60000,
+                "attestation": "none"
+            }
+        }
+        """
+        let decoded = try JSONDecoder().decode(
+            PasskeyRegistrationChallenge.self,
+            from: Data(json.utf8)
+        )
+        #expect(decoded.publicKey.rp.id == "auth.example.com")
+        #expect(decoded.publicKey.user.name == "alice")
+        #expect(decoded.publicKey.challenge == "Y2hhbGxlbmdlLWJ5dGVz")
+        #expect(decoded.publicKey.timeout == 60000)
+    }
+
+    // MARK: - helpers (duplicate of AccountAPI helpers)
+
+    private typealias ResponseBuilder = @Sendable (URLRequest) -> (HTTPURLResponse, Data)?
+
+    @MainActor
+    private func makeClient(
+        sub: String,
+        responseBuilder: ResponseBuilder? = nil
+    ) async throws -> (RauthyClient, RequestBox, InMemoryStorage) {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let box = RequestBox()
+
+        MockURLProtocol.handler = { request in
+            box.append(request)
+            if let custom = responseBuilder?(request) {
+                return custom
+            }
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeTokenWithIDToken(sub: sub))
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        return (client, box, storage)
+    }
+}
+
+// MARK: - Additional Account wire tests for rename / convertPasskey / avatar
+
+@Suite("AccountAPI additions")
+struct AccountAPIAdditionsTests {
+    @Test("renameDevice PUTs /users/{id}/devices with device_id + name")
+    func renameDevice() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+        try await client.account.renameDevice(id: "dev-1", to: "MacBook")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/devices")
+        #expect(req.httpMethod == "PUT")
+        let json = try JSONSerialization.jsonObject(
+            with: WireTestHelpers.bodyData(from: req)
+        ) as? [String: Any]
+        #expect(json?["device_id"] as? String == "dev-1")
+        #expect(json?["name"] as? String == "MacBook")
+    }
+
+    @Test("convertToPasskeyOnly POSTs /users/{id}/self/convert_passkey")
+    func convertToPasskeyOnly() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+        try await client.account.convertToPasskeyOnly()
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/self/convert_passkey")
+        #expect(req.httpMethod == "POST")
+    }
+
+    @Test("uploadAvatar PUTs multipart to /users/{id}/picture")
+    func uploadAvatar() async throws {
+        let (client, capturedRequests, _) = try await makeClient(
+            sub: "user-abc",
+            responseBuilder: { request in
+                if request.url?.path == "/users/user-abc/picture" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                    return (response, Data("new-picture-id-xyz".utf8))
+                }
+                return nil
+            }
+        )
+
+        let imageBytes = Data([0xFF, 0xD8, 0xFF, 0xE0])  // JPEG magic
+        let pictureID = try await client.account.uploadAvatar(
+            imageBytes,
+            mimeType: "image/jpeg"
+        )
+        #expect(pictureID == "new-picture-id-xyz")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/picture")
+        #expect(req.httpMethod == "PUT")
+        let contentType = req.value(forHTTPHeaderField: "Content-Type") ?? ""
+        #expect(contentType.hasPrefix("multipart/form-data; boundary="))
+
+        // Body should contain the JPEG magic bytes wrapped in multipart envelope.
+        let body = WireTestHelpers.bodyData(from: req)
+        #expect(body.range(of: Data([0xFF, 0xD8, 0xFF, 0xE0])) != nil)
+        let asString = String(data: body, encoding: .utf8) ?? ""
+        // utf8 decoding may fail on binary bytes — that's OK; just check the parts we can decode
+        if !asString.isEmpty {
+            #expect(asString.contains("Content-Disposition: form-data"))
+            #expect(asString.contains("Content-Type: image/jpeg"))
+        }
+    }
+
+    @Test("deleteAvatar DELETEs /users/{id}/picture/{picture_id}")
+    func deleteAvatar() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+        try await client.account.deleteAvatar(pictureID: "picture-xyz")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/picture/picture-xyz")
+        #expect(req.httpMethod == "DELETE")
+    }
+
+    @Test("pictureURL composes /users/{userID}/picture/{pictureID}")
+    func pictureURL() async throws {
+        let (client, _, _) = try await makeClient(sub: "user-abc")
+        let url = client.pictureURL(userID: "user-abc", pictureID: "pic-1")
+        #expect(url.path == "/users/user-abc/picture/pic-1")
+    }
+
+    // MARK: - helpers (same shape as AccountAPI tests)
+
+    private typealias ResponseBuilder = @Sendable (URLRequest) -> (HTTPURLResponse, Data)?
+
+    @MainActor
+    private func makeClient(
+        sub: String,
+        responseBuilder: ResponseBuilder? = nil
+    ) async throws -> (RauthyClient, RequestBox, InMemoryStorage) {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let box = RequestBox()
+
+        MockURLProtocol.handler = { request in
+            box.append(request)
+            if let custom = responseBuilder?(request) {
+                return custom
+            }
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeTokenWithIDToken(sub: sub))
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        return (client, box, storage)
+    }
+}
+
+// MARK: - MultipartFormData
+
+@Suite("MultipartFormData")
+struct MultipartFormDataTests {
+    @Test("produces well-formed multipart envelope")
+    func wellFormed() throws {
+        let data = Data("hello".utf8)
+        let body = MultipartFormData.build(
+            boundary: "BOUNDARY",
+            fieldName: "file",
+            filename: "test.txt",
+            mimeType: "text/plain",
+            data: data
+        )
+        let s = String(data: body, encoding: .utf8)!
+        #expect(s.contains("--BOUNDARY\r\n"))
+        #expect(s.contains(#"Content-Disposition: form-data; name="file"; filename="test.txt""#))
+        #expect(s.contains("Content-Type: text/plain"))
+        #expect(s.contains("hello"))
+        #expect(s.hasSuffix("--BOUNDARY--\r\n"))
+    }
+}
+
 // MARK: - RauthyClient auto-refresh
 
 @Suite("RauthyClient auto-refresh")

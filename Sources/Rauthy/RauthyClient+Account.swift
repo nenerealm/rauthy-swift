@@ -28,6 +28,22 @@ extension RauthyClient {
         try await storage.load()
     }
 
+    /// Build the public URL for downloading an avatar. Synchronous —
+    /// doesn't need an access token because picture downloads are public.
+    /// Use with `AsyncImage` or `URLSession`.
+    public nonisolated func pictureURL(userID: String, pictureID: String) -> URL {
+        let baseString = config.issuer.absoluteString
+        let trimmedBase = baseString.hasSuffix("/")
+            ? String(baseString.dropLast())
+            : baseString
+        let safeUser = userID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? userID
+        let safePicture = pictureID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? pictureID
+        // swift-format-ignore: NeverForceUnwrap
+        return URL(string: "\(trimmedBase)/users/\(safeUser)/picture/\(safePicture)")!
+    }
+
     /// Convenience: produce an authenticated GET/POST/PUT/DELETE URLRequest
     /// targeting one of Rauthy's `/users/{id}/...` endpoints.
     internal func authenticatedRequest(
@@ -150,6 +166,70 @@ extension RauthyClient {
             method: "DELETE",
             relativePath: "users/{id}/devices",
             body: body
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    internal func performRenameDevice(deviceID: String, newName: String) async throws {
+        let body = try JSONEncoder().encode(
+            DeviceRequestBody(deviceID: deviceID, name: newName)
+        )
+        let request = try await authenticatedRequest(
+            method: "PUT",
+            relativePath: "users/{id}/devices",
+            body: body
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    // MARK: - Avatar
+
+    internal func performUploadAvatar(imageData: Data, mimeType: String) async throws -> String {
+        let boundary = "RauthySwiftBoundary_\(UUID().uuidString)"
+        let body = MultipartFormData.build(
+            boundary: boundary,
+            fieldName: "file",
+            filename: "avatar",
+            mimeType: mimeType,
+            data: imageData
+        )
+        var request = try await authenticatedRequest(
+            method: "PUT",
+            relativePath: "users/{id}/picture",
+            body: body,
+            contentType: "multipart/form-data; boundary=\(boundary)"
+        )
+        // Server-side accepts the body even without Accept: application/json,
+        // but we set it explicitly so error responses are decodable.
+        request.setValue("text/plain", forHTTPHeaderField: "Accept")
+
+        let (data, _) = try await executeAuthenticated(request)
+        // Server returns the new picture_id as raw text (not JSON).
+        guard let pictureID = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !pictureID.isEmpty
+        else {
+            throw RauthyError.server(ServerError(statusCode: 200, message: "empty picture_id"))
+        }
+        return pictureID
+    }
+
+    internal func performDeleteAvatar(pictureID: String) async throws {
+        let escaped = pictureID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? pictureID
+        let request = try await authenticatedRequest(
+            method: "DELETE",
+            relativePath: "users/{id}/picture/\(escaped)"
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    // MARK: - Passkey conversion
+
+    internal func performConvertToPasskeyOnly() async throws {
+        let request = try await authenticatedRequest(
+            method: "POST",
+            relativePath: "users/{id}/self/convert_passkey",
+            body: Data("{}".utf8)
         )
         _ = try await executeAuthenticated(request)
     }
