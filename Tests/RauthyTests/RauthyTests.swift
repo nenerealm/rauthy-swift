@@ -1099,6 +1099,41 @@ enum WireTestHelpers {
         )
     }
 
+    static func makeIDToken(sub: String = "user-123") -> IDToken {
+        let claims = IDTokenClaims(
+            sub: sub,
+            aud: ["my-app"],
+            iss: URL(string: "https://auth.example.com")!,
+            iat: Date(),
+            exp: Date(timeIntervalSinceNow: 3600)
+        )
+        return IDToken(
+            raw: "header.payload.signature",
+            header: JWTHeader(alg: .eddsa, typ: "JWT", kid: "test-kid"),
+            payload: claims,
+            signature: Data()
+        )
+    }
+
+    /// Token with an ID token attached — needed by AccountAPI to resolve
+    /// the current user ID for `/users/{id}/...` URLs.
+    static func makeTokenWithIDToken(
+        sub: String = "user-123",
+        accessToken: String = "at-active",
+        expiresIn: TimeInterval = 3600
+    ) -> Token {
+        Token(
+            id: UUID().uuidString,
+            accessToken: accessToken,
+            refreshToken: "rt-123",
+            idToken: makeIDToken(sub: sub),
+            tokenType: .bearer,
+            scope: ["openid"],
+            issuedAt: Date(),
+            expiresIn: expiresIn
+        )
+    }
+
     /// URLSession moves `httpBody` to `httpBodyStream` before URLProtocol sees
     /// the request, so we have to read the stream to get the body bytes back.
     static func bodyData(from request: URLRequest) -> Data {
@@ -1401,6 +1436,221 @@ struct FetchUserWireTests {
         } catch {
             Issue.record("expected reauthenticationRequired, got \(error)")
         }
+    }
+}
+
+// MARK: - AccountAPI wire tests
+
+@Suite("AccountAPI")
+struct AccountAPIWireTests {
+    @Test("updatePreferredUsername PUTs to /users/{id}/self/preferred_username")
+    func updateUsername() async throws {
+        let (client, capturedRequests, storage) = try await makeClient(sub: "user-abc")
+        _ = storage
+
+        try await client.account.updatePreferredUsername("alice")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/self/preferred_username")
+        #expect(req.httpMethod == "PUT")
+        let body = WireTestHelpers.bodyData(from: req)
+        let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        #expect(json?["preferred_username"] as? String == "alice")
+    }
+
+    @Test("updateProfile PUTs to /users/{id}/self with provided fields only")
+    func updateProfileEmail() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+
+        try await client.account.updateProfile(email: "new@example.com")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/self")
+        #expect(req.httpMethod == "PUT")
+        let body = WireTestHelpers.bodyData(from: req)
+        let json = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        #expect(json?["email"] as? String == "new@example.com")
+        #expect(json?["given_name"] == nil)
+    }
+
+    @Test("updateProfile with no fields is a no-op (no network request)")
+    func updateProfileNoOp() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+        let before = capturedRequests.count
+
+        try await client.account.updateProfile()
+
+        // Should still only have the discovery request, not a PUT.
+        #expect(capturedRequests.count == before)
+    }
+
+    @Test("devices GETs /users/{id}/devices and parses response")
+    func listDevices() async throws {
+        let (client, _, _) = try await makeClient(
+            sub: "user-abc",
+            responseBuilder: { request in
+                if request.url?.path == "/users/user-abc/devices" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                    let body = """
+                    [
+                        {
+                            "id": "dev-1",
+                            "client_id": "my-app",
+                            "user_id": "user-abc",
+                            "created": 1700000000,
+                            "access_exp": 1700003600,
+                            "peer_ip": "1.2.3.4",
+                            "name": "iPhone"
+                        }
+                    ]
+                    """
+                    return (response, Data(body.utf8))
+                }
+                return nil
+            }
+        )
+
+        let devices = try await client.account.devices()
+        #expect(devices.count == 1)
+        #expect(devices.first?.id == "dev-1")
+        #expect(devices.first?.peerIP == "1.2.3.4")
+        #expect(devices.first?.name == "iPhone")
+    }
+
+    @Test("revokeDevice DELETEs /users/{id}/devices with device_id body")
+    func revokeDevice() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+        try await client.account.revokeDevice(id: "dev-to-remove")
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/devices")
+        #expect(req.httpMethod == "DELETE")
+        let json = try JSONSerialization.jsonObject(
+            with: WireTestHelpers.bodyData(from: req)
+        ) as? [String: Any]
+        #expect(json?["device_id"] as? String == "dev-to-remove")
+    }
+
+    @Test("requestAccountDeletion GETs /users/{id}/self/delete")
+    func requestDeletion() async throws {
+        let (client, capturedRequests, _) = try await makeClient(sub: "user-abc")
+        try await client.account.requestAccountDeletion()
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/self/delete")
+        #expect(req.httpMethod == "GET")
+    }
+
+    @Test("confirmAccountDeletion DELETEs /users/{id}/self/delete + clears storage")
+    func confirmDeletion() async throws {
+        let (client, capturedRequests, storage) = try await makeClient(sub: "user-abc")
+        try await client.account.confirmAccountDeletion()
+
+        let req = try #require(capturedRequests.last)
+        #expect(req.url?.path == "/users/user-abc/self/delete")
+        #expect(req.httpMethod == "DELETE")
+
+        let stored = try await storage.load()
+        #expect(stored == nil)
+    }
+
+    @Test("401 from account endpoint throws reauthenticationRequired")
+    func unauthorized() async throws {
+        let (client, _, _) = try await makeClient(
+            sub: "user-abc",
+            responseBuilder: { request in
+                if request.url?.path.contains("preferred_username") == true {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 401,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                    return (response, Data())
+                }
+                return nil
+            }
+        )
+
+        do {
+            try await client.account.updatePreferredUsername("alice")
+            Issue.record("expected throw")
+        } catch RauthyError.reauthenticationRequired {
+            // ok
+        } catch {
+            Issue.record("expected reauthenticationRequired, got \(error)")
+        }
+    }
+
+    // MARK: - helpers
+
+    typealias ResponseBuilder = @Sendable (URLRequest) -> (HTTPURLResponse, Data)?
+
+    /// Build a RauthyClient with an InMemoryStorage holding a token + ID token.
+    /// Returns (client, capturedRequests box, storage). The box accumulates
+    /// every request the mock URLSession sees; tests inspect `.last` typically.
+    @MainActor
+    private func makeClient(
+        sub: String,
+        responseBuilder: ResponseBuilder? = nil
+    ) async throws -> (RauthyClient, RequestBox, InMemoryStorage) {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let box = RequestBox()
+
+        MockURLProtocol.handler = { request in
+            box.append(request)
+            if let custom = responseBuilder?(request) {
+                return custom
+            }
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            // Default: 200 OK with empty body
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeTokenWithIDToken(sub: sub))
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        return (client, box, storage)
+    }
+}
+
+/// Thread-safe collector for captured URLRequests.
+final class RequestBox: @unchecked Sendable {
+    private var items: [URLRequest] = []
+    private let lock = NSLock()
+
+    func append(_ request: URLRequest) {
+        lock.lock(); defer { lock.unlock() }
+        items.append(request)
+    }
+
+    var last: URLRequest? {
+        lock.lock(); defer { lock.unlock() }
+        return items.last
+    }
+
+    var count: Int {
+        lock.lock(); defer { lock.unlock() }
+        return items.count
     }
 }
 

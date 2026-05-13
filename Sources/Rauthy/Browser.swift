@@ -1,0 +1,69 @@
+#if canImport(UIKit)
+import Foundation
+import UIKit
+
+/// Routes the user to Rauthy's hosted account dashboard and other
+/// web-based flows that the SDK doesn't (or can't) handle natively.
+///
+/// Access via `client.web`. All methods open URLs in the system browser
+/// (Safari on iOS), where the user authenticates via Rauthy's normal
+/// session cookies and uses Rauthy's account UI directly.
+///
+/// **Why the system browser, not `ASWebAuthenticationSession`?**
+/// `ASWebAuthenticationSession` is sandboxed (per-app cookie jar), so the
+/// user would have to sign in to Rauthy a second time inside the sheet —
+/// bad UX. Opening in Safari means the user keeps their existing Rauthy
+/// session if they have one.
+@MainActor
+public struct WebFlows: Sendable {
+    let client: RauthyClient
+
+    public init(client: RauthyClient) {
+        self.client = client
+    }
+
+    /// Open Rauthy's account dashboard at `<issuer>/account` in Safari.
+    /// Useful for "Manage account" links — the user can change their
+    /// password, manage passkeys, view event history, etc. without the
+    /// SDK having to wrap every API.
+    @discardableResult
+    public func openAccountDashboard() async throws -> Bool {
+        let url = try await client.accountDashboardURL()
+        return await UIApplication.shared.open(url)
+    }
+
+    /// Open an arbitrary Rauthy account URL in Safari.
+    ///
+    /// Use this for deep links into the account dashboard (e.g., directly
+    /// to `/account/password` or `/account/devices`) when you want to skip
+    /// the top-level dashboard view.
+    @discardableResult
+    public func openAccountURL(path: String) async throws -> Bool {
+        let url = try await client.accountSubURL(path: path)
+        return await UIApplication.shared.open(url)
+    }
+}
+
+public extension RauthyClient {
+    /// Namespace for web-based account flows. See `WebFlows`.
+    var web: WebFlows {
+        WebFlows(client: self)
+    }
+}
+
+extension RauthyClient {
+    internal func accountDashboardURL() -> URL {
+        accountSubURL(path: "account")
+    }
+
+    internal func accountSubURL(path: String) -> URL {
+        let baseString = config.issuer.absoluteString
+        let trimmedBase = baseString.hasSuffix("/")
+            ? String(baseString.dropLast())
+            : baseString
+        let trimmedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        // swift-format-ignore: NeverForceUnwrap
+        return URL(string: "\(trimmedBase)/\(trimmedPath)")!
+    }
+}
+#endif

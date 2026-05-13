@@ -1,0 +1,176 @@
+import Foundation
+
+/// Account-API implementations live as an extension on `RauthyClient` so
+/// they can reach the actor's private state (storage, URLSession, current
+/// user ID derived from the cached ID token). The public façade is
+/// `AccountAPI`, accessed via `client.account`.
+public extension RauthyClient {
+    /// Namespace for self-service account operations.
+    var account: AccountAPI {
+        AccountAPI(client: self)
+    }
+}
+
+extension RauthyClient {
+    // MARK: - User ID resolution
+
+    /// Resolve the current user's Rauthy ID from the locally-stored ID token.
+    /// Assumes the default Rauthy config where `sub == uid`.
+    internal func currentUserID() async throws -> String {
+        guard let token = try await loadStoredToken(),
+              let idToken = token.idToken else {
+            throw RauthyError.reauthenticationRequired
+        }
+        return idToken.payload.sub
+    }
+
+    internal func loadStoredToken() async throws -> Token? {
+        try await storage.load()
+    }
+
+    /// Convenience: produce an authenticated GET/POST/PUT/DELETE URLRequest
+    /// targeting one of Rauthy's `/users/{id}/...` endpoints.
+    internal func authenticatedRequest(
+        method: String,
+        relativePath: String,
+        body: Data? = nil,
+        contentType: String? = nil
+    ) async throws -> URLRequest {
+        let accessToken = try await validAccessToken()
+        let userID = try await currentUserID()
+        let trimmed = relativePath.replacingOccurrences(of: "{id}", with: userID)
+        let url = appendPath(to: config.issuer, path: trimmed)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        if body != nil {
+            request.setValue(contentType ?? "application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
+
+    private func appendPath(to base: URL, path: String) -> URL {
+        // Avoid URL.appendingPathComponent's percent-encoding of '/' inside the path.
+        let baseString = base.absoluteString
+        let trimmedBase = baseString.hasSuffix("/") ? String(baseString.dropLast()) : baseString
+        let trimmedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        // swift-format-ignore: NeverForceUnwrap
+        return URL(string: "\(trimmedBase)/\(trimmedPath)")!
+    }
+
+    /// Execute an authenticated request and return raw `(Data, HTTPURLResponse)`.
+    /// Handles common error mappings: 401 → reauthenticationRequired, 4xx/5xx → server error.
+    internal func executeAuthenticated(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await urlSession.data(for: request)
+        } catch {
+            throw RauthyError.networkUnavailable
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw RauthyError.networkUnavailable
+        }
+        if http.statusCode == 401 {
+            throw RauthyError.reauthenticationRequired
+        }
+        if http.statusCode >= 400 {
+            // Try to decode an OAuth-style error first.
+            if let oauthError = try? JSONDecoder().decode(OAuthError.self, from: data) {
+                throw RauthyError.oauth(oauthError)
+            }
+            throw RauthyError.server(ServerError(
+                statusCode: http.statusCode,
+                message: String(data: data, encoding: .utf8)
+            ))
+        }
+        return (data, http)
+    }
+
+    // MARK: - Profile
+
+    internal func performUpdateUserSelf(
+        email: String?,
+        givenName: String?,
+        familyName: String?,
+        language: String?,
+        passwordCurrent: String?,
+        passwordNew: String?,
+        mfaCode: String?
+    ) async throws {
+        var body = UpdateUserSelfBody()
+        body.email = email
+        body.givenName = givenName
+        body.familyName = familyName
+        body.language = language
+        body.passwordCurrent = passwordCurrent
+        body.passwordNew = passwordNew
+        body.mfaCode = mfaCode
+
+        if body.isEmpty {
+            return  // Nothing to update, treat as no-op.
+        }
+
+        let data = try JSONEncoder().encode(body)
+        let request = try await authenticatedRequest(
+            method: "PUT",
+            relativePath: "users/{id}/self",
+            body: data
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    internal func performUpdatePreferredUsername(_ value: String) async throws {
+        let body = try JSONEncoder().encode(PreferredUsernameBody(preferredUsername: value))
+        let request = try await authenticatedRequest(
+            method: "PUT",
+            relativePath: "users/{id}/self/preferred_username",
+            body: body
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    // MARK: - Devices
+
+    internal func performListDevices() async throws -> [Device] {
+        let request = try await authenticatedRequest(
+            method: "GET",
+            relativePath: "users/{id}/devices"
+        )
+        let (data, _) = try await executeAuthenticated(request)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode([Device].self, from: data)
+    }
+
+    internal func performRevokeDevice(deviceID: String, name: String?) async throws {
+        let body = try JSONEncoder().encode(DeviceRequestBody(deviceID: deviceID, name: name))
+        let request = try await authenticatedRequest(
+            method: "DELETE",
+            relativePath: "users/{id}/devices",
+            body: body
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    // MARK: - Account deletion
+
+    internal func performRequestAccountDeletion() async throws {
+        let request = try await authenticatedRequest(
+            method: "GET",
+            relativePath: "users/{id}/self/delete"
+        )
+        _ = try await executeAuthenticated(request)
+    }
+
+    internal func performConfirmAccountDeletion() async throws {
+        let request = try await authenticatedRequest(
+            method: "DELETE",
+            relativePath: "users/{id}/self/delete"
+        )
+        _ = try await executeAuthenticated(request)
+        // On success, clear local storage.
+        try? await storage.clear()
+    }
+}

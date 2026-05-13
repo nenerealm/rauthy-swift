@@ -12,8 +12,8 @@ import Logging
 /// of mutable state — safe to access concurrently from any task.
 public actor RauthyClient {
     public let config: RauthyConfig
-    private let storage: any SessionStorage
-    private let urlSession: URLSession
+    internal let storage: any SessionStorage
+    internal let urlSession: URLSession
 
     private var cachedDiscovery: OpenIDConfiguration?
     private var cachedJWKS: JWKSet?
