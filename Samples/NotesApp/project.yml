@@ -13,7 +13,7 @@ name: NotesApp
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"
   developmentLanguage: en
   groupOrdering:
     - order:
@@ -52,7 +52,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
-        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         GENERATE_INFOPLIST_FILE: "NO"
         ENABLE_PREVIEWS: "YES"
         CODE_SIGN_STYLE: Automatic
