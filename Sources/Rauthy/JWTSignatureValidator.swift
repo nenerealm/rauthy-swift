@@ -1,15 +1,17 @@
 import Foundation
 import CryptoKit
+import Security
 
 /// Cryptographic signature validation for JWTs.
 ///
-/// v0.1 supports Ed25519 (OKP) only. RSA support (RS256/384/512) arrives in
-/// a later release once RSA public-key DER encoding helpers are in place.
+/// Supports Ed25519 (OKP) via CryptoKit and RSA (RS256/384/512) via the
+/// Security framework. These are the four algorithms Rauthy advertises in
+/// `dpop_signing_alg_values_supported` and uses for ID token signing.
 public enum JWTSignatureValidator {
     /// Validate the signature on a parsed JWT against the given key.
     ///
     /// - Throws: `RauthyError.invalidJWT(.signatureInvalid)` on cryptographic
-    ///   failure or unsupported algorithm.
+    ///   failure or `.wrongAlgorithm` if the JWK doesn't match the algorithm.
     public static func validate(
         parts: JWTDecoder.Parts,
         algorithm: SigningAlgorithm,
@@ -18,13 +20,47 @@ public enum JWTSignatureValidator {
         switch algorithm {
         case .eddsa:
             try validateEd25519(parts: parts, jwk: jwk)
-        case .rs256, .rs384, .rs512:
-            // RSA validation requires DER encoding of (n, e) into a SecKey,
-            // which we haven't implemented yet. Until then, reject explicitly
-            // so callers see a clear failure instead of false positives.
-            throw RauthyError.invalidJWT(
-                .wrongAlgorithm(allowed: [.eddsa], got: algorithm.rawValue)
-            )
+        case .rs256:
+            try validateRSA(parts: parts, jwk: jwk, secAlgorithm: .rsaSignatureMessagePKCS1v15SHA256)
+        case .rs384:
+            try validateRSA(parts: parts, jwk: jwk, secAlgorithm: .rsaSignatureMessagePKCS1v15SHA384)
+        case .rs512:
+            try validateRSA(parts: parts, jwk: jwk, secAlgorithm: .rsaSignatureMessagePKCS1v15SHA512)
+        }
+    }
+
+    private static func validateRSA(
+        parts: JWTDecoder.Parts,
+        jwk: JWK,
+        secAlgorithm: SecKeyAlgorithm
+    ) throws {
+        guard jwk.kty == "RSA",
+              let nString = jwk.n,
+              let eString = jwk.e,
+              let nData = Data(base64URLEncoded: nString),
+              let eData = Data(base64URLEncoded: eString)
+        else {
+            throw RauthyError.invalidJWT(.signatureInvalid)
+        }
+
+        let secKey: SecKey
+        do {
+            secKey = try RSAPublicKey.make(n: nData, e: eData)
+        } catch {
+            throw RauthyError.invalidJWT(.signatureInvalid)
+        }
+
+        let signedInput = Data(parts.signedInput.utf8)
+        var error: Unmanaged<CFError>?
+        let isValid = SecKeyVerifySignature(
+            secKey,
+            secAlgorithm,
+            signedInput as CFData,
+            parts.signature as CFData,
+            &error
+        )
+        if !isValid {
+            throw RauthyError.invalidJWT(.signatureInvalid)
         }
     }
 

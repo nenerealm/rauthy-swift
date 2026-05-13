@@ -544,6 +544,76 @@ struct AuthorizationURLBuilderTests {
     }
 }
 
+// MARK: - EndSessionURLBuilder
+
+@Suite("EndSessionURLBuilder")
+struct EndSessionURLBuilderTests {
+    @Test("builds URL with all standard parameters")
+    func buildsURL() throws {
+        let url = EndSessionURLBuilder.build(
+            endpoint: URL(string: "https://auth.example.com/end_session")!,
+            idTokenHint: "fake.id.token",
+            postLogoutRedirect: URL(string: "myapp://logged-out")!,
+            clientID: "my-app"
+        )
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        let items = Dictionary(uniqueKeysWithValues: components.queryItems!.compactMap { item -> (String, String)? in
+            guard let value = item.value else { return nil }
+            return (item.name, value)
+        })
+        #expect(items["id_token_hint"] == "fake.id.token")
+        #expect(items["post_logout_redirect_uri"] == "myapp://logged-out")
+        #expect(items["client_id"] == "my-app")
+    }
+
+    @Test("omits id_token_hint when nil")
+    func omitsIdTokenHint() {
+        let url = EndSessionURLBuilder.build(
+            endpoint: URL(string: "https://auth.example.com/end_session")!,
+            idTokenHint: nil,
+            postLogoutRedirect: URL(string: "myapp://logged-out")!,
+            clientID: "my-app"
+        )
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        let names = components.queryItems!.map(\.name)
+        #expect(!names.contains("id_token_hint"))
+        #expect(names.contains("post_logout_redirect_uri"))
+    }
+
+    @Test("includes state parameter when provided")
+    func includesState() {
+        let url = EndSessionURLBuilder.build(
+            endpoint: URL(string: "https://auth.example.com/end_session")!,
+            idTokenHint: "tok",
+            postLogoutRedirect: URL(string: "myapp://logged-out")!,
+            clientID: "my-app",
+            state: "abc-123"
+        )
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        let items = Dictionary(uniqueKeysWithValues: components.queryItems!.compactMap { item -> (String, String)? in
+            guard let value = item.value else { return nil }
+            return (item.name, value)
+        })
+        #expect(items["state"] == "abc-123")
+    }
+}
+
+// MARK: - SignOutScope
+
+@Suite("SignOutScope")
+struct SignOutScopeTests {
+    @Test("equality across cases")
+    func equality() {
+        let r1: URL = URL(string: "myapp://logout")!
+        let r2: URL = URL(string: "myapp://other")!
+        #expect(SignOutScope.local == .local)
+        #expect(SignOutScope.revokeTokens == .revokeTokens)
+        #expect(SignOutScope.rpInitiated(postLogoutRedirect: r1) == .rpInitiated(postLogoutRedirect: r1))
+        #expect(SignOutScope.rpInitiated(postLogoutRedirect: r1) != .rpInitiated(postLogoutRedirect: r2))
+        #expect(SignOutScope.local != .revokeTokens)
+    }
+}
+
 // MARK: - OIDCDiscovery URL builder
 
 @Suite("OIDCDiscovery")
@@ -591,8 +661,8 @@ struct JWTSignatureValidatorTests {
         }
     }
 
-    @Test("rejects RSA algorithms in v0.1")
-    func rejectsRSA() throws {
+    @Test("rejects kty mismatch (OKP JWK with RS256 algorithm)")
+    func rejectsKtyMismatch() throws {
         let (_, jwk) = makeEd25519KeyAndJWK()
         let parts = JWTDecoder.Parts(
             headerBytes: Data(),
@@ -603,6 +673,117 @@ struct JWTSignatureValidatorTests {
         #expect(throws: RauthyError.self) {
             try JWTSignatureValidator.validate(parts: parts, algorithm: .rs256, jwk: jwk)
         }
+    }
+
+    @Test("accepts valid RS256 signature")
+    func acceptsValidRS256() throws {
+        try runRSARoundTrip(algorithm: .rs256, secAlgorithm: .rsaSignatureMessagePKCS1v15SHA256)
+    }
+
+    @Test("accepts valid RS384 signature")
+    func acceptsValidRS384() throws {
+        try runRSARoundTrip(algorithm: .rs384, secAlgorithm: .rsaSignatureMessagePKCS1v15SHA384)
+    }
+
+    @Test("accepts valid RS512 signature")
+    func acceptsValidRS512() throws {
+        try runRSARoundTrip(algorithm: .rs512, secAlgorithm: .rsaSignatureMessagePKCS1v15SHA512)
+    }
+
+    @Test("rejects tampered RSA signature")
+    func rejectsTamperedRSA() throws {
+        let (privateKey, jwk) = try makeRSAKeyAndJWK(bitSize: 2048)
+        var parts = try signedRSAParts(
+            privateKey: privateKey,
+            payload: "test-payload",
+            secAlgorithm: .rsaSignatureMessagePKCS1v15SHA256
+        )
+        var tampered = parts.signature
+        tampered[0] ^= 0xFF
+        parts = JWTDecoder.Parts(
+            headerBytes: parts.headerBytes,
+            payloadBytes: parts.payloadBytes,
+            signature: tampered,
+            signedInput: parts.signedInput
+        )
+        #expect(throws: RauthyError.self) {
+            try JWTSignatureValidator.validate(parts: parts, algorithm: .rs256, jwk: jwk)
+        }
+    }
+
+    private func runRSARoundTrip(
+        algorithm: SigningAlgorithm,
+        secAlgorithm: SecKeyAlgorithm
+    ) throws {
+        let (privateKey, jwk) = try makeRSAKeyAndJWK(bitSize: 2048)
+        let parts = try signedRSAParts(
+            privateKey: privateKey,
+            payload: "test-payload",
+            secAlgorithm: secAlgorithm
+        )
+        try JWTSignatureValidator.validate(parts: parts, algorithm: algorithm, jwk: jwk)
+    }
+
+    private func makeRSAKeyAndJWK(bitSize: Int) throws -> (SecKey, JWK) {
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: bitSize,
+        ]
+        var error: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
+            throw RSAPublicKeyError.creationFailed("SecKeyCreateRandomKey failed")
+        }
+        guard let publicKey = SecKeyCopyPublicKey(privateKey) else {
+            throw RSAPublicKeyError.creationFailed("SecKeyCopyPublicKey failed")
+        }
+        guard let publicDER = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+            throw RSAPublicKeyError.creationFailed("SecKeyCopyExternalRepresentation failed")
+        }
+        let (n, e) = try RSAPublicKey.parse(der: publicDER)
+        let jwk = JWK(
+            kty: "RSA",
+            alg: nil,
+            kid: "rsa-test",
+            n: n.base64URLEncodedString(),
+            e: e.base64URLEncodedString()
+        )
+        return (privateKey, jwk)
+    }
+
+    private func signedRSAParts(
+        privateKey: SecKey,
+        payload: String,
+        secAlgorithm: SecKeyAlgorithm
+    ) throws -> JWTDecoder.Parts {
+        let alg: String
+        switch secAlgorithm {
+        case .rsaSignatureMessagePKCS1v15SHA256: alg = "RS256"
+        case .rsaSignatureMessagePKCS1v15SHA384: alg = "RS384"
+        case .rsaSignatureMessagePKCS1v15SHA512: alg = "RS512"
+        default: alg = "RS256"
+        }
+        let header = Data(#"{"alg":"\#(alg)","typ":"JWT","kid":"rsa-test"}"#.utf8)
+        let payloadData = Data(payload.utf8)
+        let headerSeg = header.base64URLEncodedString()
+        let payloadSeg = payloadData.base64URLEncodedString()
+        let signedInput = "\(headerSeg).\(payloadSeg)"
+
+        var error: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(
+            privateKey,
+            secAlgorithm,
+            Data(signedInput.utf8) as CFData,
+            &error
+        ) as Data? else {
+            throw RSAPublicKeyError.creationFailed("SecKeyCreateSignature failed")
+        }
+
+        return JWTDecoder.Parts(
+            headerBytes: header,
+            payloadBytes: payloadData,
+            signature: signature,
+            signedInput: signedInput
+        )
     }
 
     private func makeEd25519KeyAndJWK() -> (Curve25519.Signing.PrivateKey, JWK) {
@@ -1325,6 +1506,74 @@ struct AutoRefreshTests {
         let client = RauthyClient(config: config, storage: storage, urlSession: session)
         let refreshed = try await client.refreshSession()
         #expect(refreshed.accessToken == "at-forced")
+    }
+
+    @Test("parallel callers of an expired-token validAccessToken coalesce into one refresh")
+    func parallelCallersCoalesce() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        nonisolated(unsafe) var tokenEndpointCalls = 0
+        let counterLock = NSLock()
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            counterLock.lock()
+            tokenEndpointCalls += 1
+            counterLock.unlock()
+            // Add a small delay to ensure parallel callers race.
+            Thread.sleep(forTimeInterval: 0.05)
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = #"""
+            {
+                "access_token": "at-coalesced",
+                "refresh_token": "rt-coalesced",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }
+            """#
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        let expiredToken = Token(
+            id: UUID().uuidString,
+            accessToken: "at-stale",
+            refreshToken: "rt-original",
+            idToken: nil,
+            tokenType: .bearer,
+            scope: ["openid"],
+            issuedAt: Date().addingTimeInterval(-7200),
+            expiresIn: 3600
+        )
+        try await storage.save(expiredToken)
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+
+        // Fire 5 concurrent callers.
+        async let r1 = client.validAccessToken()
+        async let r2 = client.validAccessToken()
+        async let r3 = client.validAccessToken()
+        async let r4 = client.validAccessToken()
+        async let r5 = client.validAccessToken()
+
+        let results = try await [r1, r2, r3, r4, r5]
+        for result in results {
+            #expect(result == "at-coalesced")
+        }
+        // Without single-flight, this would be 5 (one per caller).
+        #expect(tokenEndpointCalls == 1)
     }
 
     @Test("invalid_grant during refresh clears storage and throws reauthenticationRequired")

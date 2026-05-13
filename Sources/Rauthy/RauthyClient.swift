@@ -18,6 +18,11 @@ public actor RauthyClient {
     private var cachedDiscovery: OpenIDConfiguration?
     private var cachedJWKS: JWKSet?
 
+    /// In-flight refresh task. When non-nil, concurrent callers wait on this
+    /// task instead of starting another refresh. Cleared after completion
+    /// (success or failure) so subsequent callers re-fetch from storage.
+    private var refreshInFlight: Task<Token, any Error>?
+
     public init(
         config: RauthyConfig,
         storage: any SessionStorage = InMemoryStorage(),
@@ -110,7 +115,15 @@ public actor RauthyClient {
     /// - `.revokeTokens`: revokes the refresh token at Rauthy's `/oidc/revoke`
     ///   endpoint per RFC 7009. Server invalidates the session; SDK clears
     ///   local storage on success.
-    public func signOut(scope: SignOutScope = .local) async throws {
+    /// - `.rpInitiated(postLogoutRedirect:)`: opens Rauthy's end-session
+    ///   endpoint in `ASWebAuthenticationSession`, signs the user out server-
+    ///   side, receives the post-logout redirect, then clears local storage.
+    ///   Requires `anchor`.
+    /// - `.full(postLogoutRedirect:)`: both revoke + RP-Initiated. Requires `anchor`.
+    public func signOut(
+        scope: SignOutScope = .local,
+        anchor: ASPresentationAnchor? = nil
+    ) async throws {
         let token = try await storage.load()
 
         switch scope {
@@ -120,7 +133,6 @@ public actor RauthyClient {
 
         case .revokeTokens:
             guard let token else {
-                // Nothing to revoke — just clear storage.
                 try await storage.clear()
                 return
             }
@@ -133,7 +145,70 @@ public actor RauthyClient {
             )
             try await storage.clear()
             config.logger.info("Token revocation + local sign-out complete")
+
+        case .rpInitiated(let postLogoutRedirect):
+            guard let anchor else { throw RauthyError.missingPresentationContext }
+            try await performRPInitiatedLogout(
+                token: token,
+                postLogoutRedirect: postLogoutRedirect,
+                anchor: anchor
+            )
+            try await storage.clear()
+            config.logger.info("RP-Initiated sign-out complete")
+
+        case .full(let postLogoutRedirect):
+            guard let anchor else { throw RauthyError.missingPresentationContext }
+            // Try revoke first (so server invalidates even if the web flow fails).
+            // Don't throw on revoke failure — we still want to drive the user
+            // through RP-Initiated as a fallback.
+            if let token {
+                let discovery = try? await discoveryDocument()
+                if let discovery {
+                    try? await TokenRevocation.revoke(
+                        token: token,
+                        config: config,
+                        discovery: discovery,
+                        session: urlSession
+                    )
+                }
+            }
+            try await performRPInitiatedLogout(
+                token: token,
+                postLogoutRedirect: postLogoutRedirect,
+                anchor: anchor
+            )
+            try await storage.clear()
+            config.logger.info("Full sign-out (revoke + RP-Initiated) complete")
         }
+    }
+
+    private func performRPInitiatedLogout(
+        token: Token?,
+        postLogoutRedirect: URL,
+        anchor: ASPresentationAnchor
+    ) async throws {
+        let discovery = try await discoveryDocument()
+        guard let endpoint = discovery.endSessionEndpoint else {
+            throw RauthyError.missingDiscoveryDocument
+        }
+        guard let callbackScheme = postLogoutRedirect.scheme else {
+            throw RauthyError.invalidIssuerURL
+        }
+
+        let url = EndSessionURLBuilder.build(
+            endpoint: endpoint,
+            idTokenHint: token?.idToken?.raw,
+            postLogoutRedirect: postLogoutRedirect,
+            clientID: config.clientID
+        )
+
+        // Wait for the redirect to come back. We don't care about its
+        // contents — its arrival means the server-side logout completed.
+        _ = try await WebAuthBridge.authenticate(
+            url: url,
+            callbackScheme: callbackScheme,
+            anchor: anchor
+        )
     }
 
     // MARK: - Session restoration
@@ -212,29 +287,40 @@ public actor RauthyClient {
     // MARK: - Internal helpers
 
     private func refresh(_ token: Token) async throws -> Token {
-        guard let refreshToken = token.refreshToken else {
-            throw RauthyError.reauthenticationRequired
+        // Single-flight: if a refresh is already in progress, wait for its
+        // result rather than firing a parallel request (the second would
+        // fail because Rauthy rotates refresh tokens — first use wins).
+        if let inFlight = refreshInFlight {
+            return try await inFlight.value
         }
-        let discovery = try await discoveryDocument()
-        do {
-            let new = try await TokenExchange.refresh(
-                refreshToken: refreshToken,
-                config: config,
-                discovery: discovery,
-                session: urlSession
-            )
-            try await storage.save(new)
-            config.logger.debug("Token refreshed", metadata: ["expires_in": "\(new.expiresIn)"])
-            return new
-        } catch RauthyError.oauth(let err) where err.code == .invalidGrant {
-            // Refresh token revoked or expired; user must re-auth.
-            try? await storage.clear()
-            throw RauthyError.reauthenticationRequired
-        } catch let error as RauthyError {
-            throw error
-        } catch {
-            throw RauthyError.tokenRefreshFailed(underlying: error)
+
+        let task = Task<Token, any Error> { [config, urlSession, storage] in
+            guard let refreshToken = token.refreshToken else {
+                throw RauthyError.reauthenticationRequired
+            }
+            let discovery = try await self.discoveryDocument()
+            do {
+                let new = try await TokenExchange.refresh(
+                    refreshToken: refreshToken,
+                    config: config,
+                    discovery: discovery,
+                    session: urlSession
+                )
+                try await storage.save(new)
+                config.logger.debug("Token refreshed", metadata: ["expires_in": "\(new.expiresIn)"])
+                return new
+            } catch RauthyError.oauth(let err) where err.code == .invalidGrant {
+                try? await storage.clear()
+                throw RauthyError.reauthenticationRequired
+            } catch let error as RauthyError {
+                throw error
+            } catch {
+                throw RauthyError.tokenRefreshFailed(underlying: error)
+            }
         }
+        refreshInFlight = task
+        defer { refreshInFlight = nil }
+        return try await task.value
     }
 
     private func discoveryDocument() async throws -> OpenIDConfiguration {

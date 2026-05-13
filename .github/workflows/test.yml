@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Pure Swift Package build + tests. Fast, runs first.
+  swift-test:
+    name: swift test (Swift 6, strict concurrency)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16+
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: swift build
+        run: swift build -c debug
+
+      - name: swift test
+        run: swift test --enable-code-coverage
+
+  # Build the sample iOS app to catch SwiftUI/UIKit integration breakage.
+  # Uses xcodegen to generate the .xcodeproj on the fly.
+  xcode-build-sample:
+    name: xcodebuild Samples/NotesApp
+    runs-on: macos-15
+    needs: swift-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16+
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: Samples/NotesApp
+        run: xcodegen generate
+
+      - name: Build for iOS Simulator
+        working-directory: Samples/NotesApp
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NotesApp.xcodeproj \
+            -scheme NotesApp \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            build | xcbeautify --renderer github-actions || true

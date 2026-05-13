@@ -2,7 +2,7 @@ import SwiftUI
 import Rauthy
 
 struct MainView: View {
-    @EnvironmentObject var auth: AuthViewModel
+    @EnvironmentObject var auth: RauthyAuthState
     let user: User
 
     var body: some View {
@@ -48,7 +48,7 @@ struct MainView: View {
 
                 Section {
                     Button(role: .destructive) {
-                        Task { await auth.signOut() }
+                        Task { await auth.signOut(scope: .revokeTokens) }
                     } label: {
                         HStack {
                             Image(systemName: "rectangle.portrait.and.arrow.right")

@@ -1,9 +1,8 @@
 import SwiftUI
-import AuthenticationServices
+import Rauthy
 
 struct LoginView: View {
-    @EnvironmentObject var auth: AuthViewModel
-    let anchor: ASPresentationAnchor?
+    @EnvironmentObject var auth: RauthyAuthState
 
     var body: some View {
         VStack(spacing: 32) {
@@ -23,8 +22,7 @@ struct LoginView: View {
             Spacer()
 
             Button {
-                guard let anchor else { return }
-                Task { await auth.signIn(anchor: anchor) }
+                Task { await auth.signIn() }
             } label: {
                 HStack {
                     if auth.isBusy {
@@ -38,7 +36,7 @@ struct LoginView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(auth.isBusy || anchor == nil)
+            .disabled(auth.isBusy)
 
             Text("Server: misspinkelf.com")
                 .font(.caption)

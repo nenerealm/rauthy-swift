@@ -1,26 +1,16 @@
 import SwiftUI
-import AuthenticationServices
+import Rauthy
 
+/// Top-level container. Delegates routing to `RauthyAuthGate` and adds an
+/// error alert that surfaces `RauthyAuthState.lastError`.
 struct ContentView: View {
-    @EnvironmentObject var auth: AuthViewModel
-    @State private var anchor: ASPresentationAnchor?
+    @EnvironmentObject var auth: RauthyAuthState
 
     var body: some View {
-        ZStack {
-            // Invisible probe that captures the host window for ASWebAuth.
-            WindowAnchor { window in
-                self.anchor = window
-            }
-            .frame(width: 0, height: 0)
-
-            switch auth.state {
-            case .loading:
-                ProgressView()
-            case .signedOut:
-                LoginView(anchor: anchor)
-            case .signedIn(let user):
-                MainView(user: user)
-            }
+        RauthyAuthGate { user in
+            MainView(user: user)
+        } signedOut: {
+            LoginView()
         }
         .alert(
             "Sign-in error",
@@ -32,7 +22,7 @@ struct ContentView: View {
         ) { _ in
             Button("OK") { auth.lastError = nil }
         } message: { error in
-            Text(error)
+            Text(String(describing: error))
         }
     }
 }
