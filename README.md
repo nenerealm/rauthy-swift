@@ -1,30 +1,30 @@
 # Rauthy Swift SDK
 
-A client-side Swift SDK for [Rauthy](https://github.com/sebadob/rauthy), the
-open-source Rust OIDC/OAuth2 identity provider. SwiftUI-first, Swift 6 strict
-concurrency, no third-party crypto dependencies.
+[Rauthy](https://github.com/sebadob/rauthy) 的 Swift 客户端 SDK。Rauthy 是基于
+Rust 实现的开源 OIDC/OAuth2 身份服务。本 SDK 以 SwiftUI 为先,Swift 6 严格并发,
+不依赖任何第三方加密库。
 
 [![CI](https://github.com/nenerealm/rauthy-swift/actions/workflows/test.yml/badge.svg)](https://github.com/nenerealm/rauthy-swift/actions/workflows/test.yml)
 [![Swift 6](https://img.shields.io/badge/Swift-6.0+-orange.svg)](https://swift.org)
-[![Platforms](https://img.shields.io/badge/Platforms-iOS%2016+%20|%20macOS%2013+%20|%20tvOS%2016+%20|%20visionOS%201+-blue.svg)](#platform-support)
+[![Platforms](https://img.shields.io/badge/Platforms-iOS%2016+%20|%20macOS%2013+%20|%20tvOS%2016+%20|%20visionOS%201+-blue.svg)](#平台支持)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**Status: v1.0 GA.** Verified end-to-end against a real Rauthy server. 110 tests,
-multi-pass adversarial review, Swift 6 concurrency-clean.
+**状态:v1.0 GA。** 已对真实 Rauthy 服务器做完整端到端验证,148 个测试,
+经过多轮对抗审查,Swift 6 并发干净。
 
-## Platform support
+## 平台支持
 
 - iOS 16+
 - macOS 13+
 - tvOS 16+
 - visionOS 1+
-- watchOS: not supported (no `ASWebAuthenticationSession` on watchOS)
+- watchOS 不支持(watchOS 没有 `ASWebAuthenticationSession`)
 
-SwiftUI-first. UIKit not supported.
+只支持 SwiftUI,不支持 UIKit。
 
-## Installation
+## 安装
 
-Swift Package Manager. In your `Package.swift`:
+使用 Swift Package Manager。在你的 `Package.swift` 里:
 
 ```swift
 dependencies: [
@@ -40,63 +40,58 @@ targets: [
 ]
 ```
 
-Or in Xcode: **File → Add Package Dependencies → paste the repo URL.**
+或者在 Xcode 里:**File → Add Package Dependencies → 粘贴仓库 URL**。
 
-## What ships in v1.0
+## v1.0 含哪些东西
 
-- **Full PKCE sign-in flow** via `ASWebAuthenticationSession` (RFC 7636)
-- **Token refresh** — auto-refresh via `validAccessToken()` plus explicit
-  `refreshSession()`. Single-flight coalescing prevents concurrent refresh
-  storms.
-- **Token revocation** (RFC 7009) via `signOut(scope: .revokeTokens)`
-- **RP-Initiated Logout** (OIDC 1.0) via `signOut(scope: .rpInitiated)` / `.full`
-- **ID token signature validation** — Ed25519 (CryptoKit) + RSA RS256/384/512
-  (Security framework via PKCS#1 DER encoder)
-- **ID token claims validation** — iss / aud / azp / exp / nbf / nonce /
+- **完整的 PKCE 登录流程**,通过 `ASWebAuthenticationSession` 实现(RFC 7636)
+- **Token 续期** —— `validAccessToken()` 自动续,也可显式调
+  `refreshSession()`。单飞合流,防止并发刷新风暴
+- **Token 吊销**(RFC 7009),通过 `signOut(scope: .revokeTokens)`
+- **RP-Initiated Logout**(OIDC 1.0),通过 `signOut(scope: .rpInitiated)` /
+  `.full`
+- **ID token 签名校验** —— Ed25519(走 CryptoKit)+ RSA RS256/384/512
+  (走 Security framework,自带 PKCS#1 DER 编码器)
+- **ID token claim 校验** —— iss / aud / azp / exp / nbf / nonce / at_hash /
   email_verified
-- **OIDC discovery** + JWKS fetch with refetch-on-kid-miss
-- **Keychain-backed storage** (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) +
-  in-memory variant for tests
-- **Account self-service API** — profile / preferred username / devices
-  (list, revoke, rename) / avatar (upload / delete) / passkey conversion /
-  account deletion
-- **Passkey API** — list, register, delete (uses
+- **OIDC discovery + JWKS 拉取**,kid miss 时单次重拉;discovery `issuer`
+  字段对齐配置 issuer 才接受(防止恶意/错配 IdP)
+- **Keychain 持久化**(`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`)+
+  内存版本(供测试用)
+- **账户自助服务 API** —— 个人资料 / 偏好用户名 / 设备列表(查/吊销/重命名)/
+  头像(上传/删除)/ 转换为 passkey-only / 注销账户
+- **Passkey API** —— 列表、注册、删除(用
   `ASAuthorizationPlatformPublicKeyCredentialProvider`)
-- **`Browser.openAccountDashboard`** — bounce users to Rauthy's web account UI
-  for things the SDK doesn't expose
-- **SwiftUI primitives** — `RauthyAuthState`, `RauthyAuthGate`,
-  `.rauthyPresentationContext()`, `@RauthyUser`, `.rauthyRequiresClaim` /
-  `.rauthyRequiresRole` / `.rauthyRequiresGroup`, `.rauthyErrorAlert(_:)`
-- **`ClaimRule`** — declarative authorization rules (`.role`, `.group`,
-  combinators `.and` / `.or` / `.not`)
-- **Localized error messages** — English / Simplified Chinese / Japanese,
-  runtime-switchable via `Rauthy.locale`. Format-string safe (translator
-  typos can't crash the error path)
-- **`swift-log` integration** — plus `RauthyOSLogHandler` for OSLog routing
-  out of the box
-- **Swift 6 strict concurrency** mode (`StrictConcurrency=complete`)
-- **DocC documentation** — getting started, claim rules, SwiftUI integration,
-  localization
-- **110 tests** across 28 suites — unit, wire-protocol, single-flight refresh,
-  multi-language switching, signature validation
+- **`Browser.openAccountDashboard`** —— 把用户跳到 Rauthy 的 web 账户面板,
+  处理 SDK 没暴露的功能
+- **SwiftUI 原语** —— `RauthyAuthState`、`RauthyAuthGate`、
+  `.rauthyPresentationContext()`、`@RauthyUser`、`.rauthyRequiresClaim` /
+  `.rauthyRequiresRole` / `.rauthyRequiresGroup`、`.rauthyErrorAlert(_:)`
+- **`ClaimRule`** —— 声明式授权规则(`.role`、`.group`,组合子 `.and` /
+  `.or` / `.not`)
+- **本地化错误消息** —— 英语 / 简体中文 / 日语,运行时可通过 `Rauthy.locale`
+  切换。格式化字符串安全(翻译者打错 `%@` 占位符不会让错误路径崩溃)
+- **`swift-log` 集成** —— 自带 `RauthyOSLogHandler` 直接对接 OSLog
+- **Swift 6 严格并发模式**(`StrictConcurrency=complete`)
+- **DocC 文档** —— 入门指南、claim 规则、SwiftUI 集成、本地化
+- **148 个测试,跨 37 个 suite** —— 单元、wire 协议、单飞 refresh、多语言
+  切换、签名校验
 
-## What's NOT in v1.0 (intentionally)
+## v1.0 故意不含的东西
 
-- **DPoP token binding** (RFC 9449) — deferred to v1.1. Designed but blocked
-  on upstream Rauthy ES256 signature support.
-- **Multi-account** — deferred to v1.5. Single-account covers the common case.
-- **Passkey-as-sign-in flow** — Rauthy's web login page already handles passkey
-  authentication through the OAuth code flow redirect, so the SDK doesn't need
-  a parallel implementation.
-- **`/users/request_reset`** (forgot-password) — requires a server PoW solver;
-  this belongs in Rauthy's web UI, not an SDK for already-signed-in users.
-- **Email confirmation endpoint** — user clicks the email link, server handles
-  the rest; no SDK call needed.
-- **UIKit support** — explicitly out of scope. SwiftUI-only.
-- **CocoaPods / XCFramework distribution** — SwiftPM only. The localization
-  bundle requires SwiftPM's `Bundle.module`.
+- **DPoP token binding**(RFC 9449)—— 推迟到 v1.1。设计已完成,卡在
+  Rauthy 上游对 ES256 签名的支持上
+- **多账户** —— 推迟到 v1.5。单账户已经覆盖了绝大多数场景
+- **Passkey 作为登录方式** —— Rauthy 的 web 登录页已经通过 OAuth code flow
+  redirect 处理了 passkey 认证,SDK 不需要并行再实现一遍
+- **`/users/request_reset`**(忘记密码)—— 需要服务端 PoW solver,这属于
+  Rauthy web UI 的范畴,不应该出现在面向已登录用户的 SDK 里
+- **邮件确认端点** —— 用户点邮件里的链接,服务端处理一切,不需要 SDK 调用
+- **UIKit 支持** —— 明确不在范围内,只支持 SwiftUI
+- **CocoaPods / XCFramework 发布** —— 只支持 SwiftPM。本地化资源包依赖
+  SwiftPM 的 `Bundle.module`
 
-## Quick start
+## 快速开始
 
 ```swift
 import Rauthy
@@ -118,7 +113,7 @@ struct MyApp: App {
         let client = rauthy
         _auth = StateObject(wrappedValue: RauthyAuthState(client: client))
 
-        // Optional: localize error messages.
+        // 可选:本地化错误消息
         Rauthy.locale = Locale(identifier: "zh-Hans")
     }
 
@@ -141,7 +136,7 @@ struct LoginView: View {
     @EnvironmentObject var auth: RauthyAuthState
 
     var body: some View {
-        Button("Sign in") {
+        Button("登录") {
             Task { await auth.signIn() }
         }
         .disabled(auth.isBusy)
@@ -154,14 +149,14 @@ struct MainView: View {
 
     var body: some View {
         VStack {
-            Text("Hi, \(user.email ?? "anonymous")")
+            Text("你好,\(user.email ?? "匿名用户")")
 
-            // Declarative authorization — visible only to admins.
+            // 声明式授权 —— 只有 admin 才能看到
             AdminPanel()
                 .rauthyRequiresRole("admin")
         }
         .toolbar {
-            Button("Sign out") {
+            Button("登出") {
                 Task { await auth.signOut() }
             }
         }
@@ -169,78 +164,75 @@ struct MainView: View {
 }
 ```
 
-## Try the sample app
+## 试试 sample app
 
-A complete SwiftUI iOS app showing sign-in, user info, account management,
-and passkey registration lives at `Samples/NotesApp/`.
+`Samples/NotesApp/` 下有一个完整的 SwiftUI iOS app,演示了登录、用户信息、
+账户管理、passkey 注册等全部功能。
 
 ```bash
 cd Samples/NotesApp
-brew install xcodegen     # one-time
+brew install xcodegen     # 仅需一次
 xcodegen generate
 open NotesApp.xcodeproj
 ```
 
-Edit `NotesApp/Config.swift` to point at your own Rauthy server. Full setup
-walkthrough (admin client registration, manual Xcode path) lives in
-[`Samples/NotesApp/SETUP.md`](Samples/NotesApp/SETUP.md).
+修改 `NotesApp/Config.swift` 指向你自己的 Rauthy 服务器。完整的搭建说明
+(admin client 注册、手动 Xcode 路径等)见
+[`Samples/NotesApp/SETUP.md`](Samples/NotesApp/SETUP.md)。
 
-## Building and testing
+## 构建和测试
 
 ```bash
 swift build
-swift test --no-parallel    # serial: Rauthy.locale is a process global
+swift test --no-parallel    # 必须串行:Rauthy.locale 是进程级全局变量
 ```
 
-Requires Swift 6.0+ (tested with Swift 6.3 / Xcode 16+).
+需要 Swift 6.0+(在 Swift 6.3 / Xcode 16+ 上测过)。
 
-For DocC documentation:
+生成 DocC 文档:
 
 ```bash
 swift package generate-documentation --target Rauthy
 ```
 
-## Localization
+## 本地化
 
-Default locale follows the system. Override at runtime:
+默认跟随系统 locale。运行时覆盖:
 
 ```swift
 Rauthy.locale = Locale(identifier: "zh-Hans")
-// or "ja", or nil to follow system
+// 也可以传 "ja",或者传 nil 跟随系统
 
 catch let err as RauthyError {
     showAlert(err.localizedDescription)  // 网络不可用,请检查网络连接后重试。
 }
 ```
 
-Ships translations for `en` / `zh-Hans` / `ja`. Other locales fall back to
-English. Pull requests adding new translations are welcome — see
-`Sources/Rauthy/Resources/<lang>.lproj/Localizable.strings`.
+已自带 `en` / `zh-Hans` / `ja` 三个语言。其它 locale 自动回退到英文。欢迎
+PR 加新翻译 —— 看 `Sources/Rauthy/Resources/<lang>.lproj/Localizable.strings`。
 
-## Roadmap
+## 路线图
 
-| Milestone | Status | Highlights |
-|-----------|--------|------------|
-| v1.0 | ✅ Shipped | PKCE + Account API + Passkey + SwiftUI primitives + i18n |
-| v1.1 | Planned | DPoP token binding (RFC 9449) — blocked on upstream Rauthy ES256 |
-| v1.5 | Planned | Multi-account support |
-| v2.0 | Future | Secure Enclave key storage; revisit XCFramework distribution |
+| 里程碑 | 状态 | 重点 |
+|--------|------|------|
+| v1.0 | ✅ 已发 | PKCE + 账户 API + Passkey + SwiftUI 原语 + i18n |
+| v1.1 | 计划中 | DPoP token binding(RFC 9449)—— 等 Rauthy 上游 ES256 |
+| v1.5 | 计划中 | 多账户支持 |
+| v2.0 | 远期 | Secure Enclave 私钥存储;重新评估 XCFramework 发布 |
 
-## License
+## 许可证
 
-[Apache 2.0](LICENSE) — matches Rauthy.
+[Apache 2.0](LICENSE) —— 与 Rauthy 保持一致。
 
-## Contributing
+## 贡献
 
-Bug reports, questions, and translation contributions are welcome via GitHub
-Issues and Discussions. For non-trivial feature work, please open a Discussion
-to align on scope first.
+欢迎通过 GitHub Issues 和 Discussions 提 bug 报告、提问、贡献翻译。非小型
+功能开发请先开 Discussion 对齐范围。
 
-The upstream Rauthy project lives at https://github.com/sebadob/rauthy —
-coordinate any client-server protocol questions there.
+上游 Rauthy 项目在 https://github.com/sebadob/rauthy ——
+任何客户端-服务端协议相关的问题请去那边协调。
 
-## Acknowledgements
+## 致谢
 
-Built on top of Rauthy by Sebastian Dobe and contributors. This SDK is an
-unofficial, community-maintained client; it is not endorsed by the Rauthy
-project (yet — happy to coordinate if the maintainers would like it to be).
+构建于 Sebastian Dobe 等贡献者维护的 Rauthy 之上。本 SDK 是非官方、由社区
+维护的客户端,目前未获 Rauthy 项目正式背书(如果维护方愿意,我们乐于协调)。
