@@ -25,6 +25,10 @@ public struct IDTokenClaims: Sendable, Codable, Equatable {
     /// Expiration time.
     public let exp: Date
 
+    /// Not-before time. Tokens are rejected if their `nbf` is in the future
+    /// (modulo configured leeway). Often absent — many IdPs don't issue it.
+    public let nbf: Date?
+
     /// Nonce — must match the nonce sent in the authorization request
     /// (validated at sign-in time).
     public let nonce: String?
@@ -77,6 +81,7 @@ public struct IDTokenClaims: Sendable, Codable, Equatable {
         iss: URL,
         iat: Date,
         exp: Date,
+        nbf: Date? = nil,
         nonce: String? = nil,
         amr: [String] = [],
         authTime: Date? = nil,
@@ -105,6 +110,7 @@ public struct IDTokenClaims: Sendable, Codable, Equatable {
         self.iss = iss
         self.iat = iat
         self.exp = exp
+        self.nbf = nbf
         self.nonce = nonce
         self.amr = amr
         self.authTime = authTime
@@ -129,7 +135,7 @@ public struct IDTokenClaims: Sendable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sub, aud, azp, iss, iat, exp, nonce, amr, sid
+        case sub, aud, azp, iss, iat, exp, nbf, nonce, amr, sid
         case authTime = "auth_time"
         case atHash = "at_hash"
         case email
@@ -153,6 +159,7 @@ public struct IDTokenClaims: Sendable, Codable, Equatable {
         iss = try container.decode(URL.self, forKey: .iss)
         iat = try container.decode(Date.self, forKey: .iat)
         exp = try container.decode(Date.self, forKey: .exp)
+        nbf = try container.decodeIfPresent(Date.self, forKey: .nbf)
         nonce = try container.decodeIfPresent(String.self, forKey: .nonce)
         amr = (try? Self.decodeStringOrArray(container, key: .amr)) ?? []
         authTime = try container.decodeIfPresent(Date.self, forKey: .authTime)

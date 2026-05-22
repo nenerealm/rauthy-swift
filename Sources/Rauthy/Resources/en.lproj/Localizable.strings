@@ -6,6 +6,7 @@
 // MARK: - RauthyError (top-level)
 "error.invalidIssuerURL"           = "Invalid identity provider URL.";
 "error.missingDiscoveryDocument"   = "Could not reach the identity provider.";
+"error.discoveryIssuerMismatch"    = "The identity provider's configuration does not match what this app expects. Please contact support.";
 "error.missingPresentationContext" = "Sign-in is not ready. The app is missing a window to present the sign-in screen.";
 "error.userCancelled"              = "Sign-in was cancelled.";
 "error.userInteractionRequired"    = "Additional sign-in steps are required. Please try signing in again.";
@@ -44,6 +45,7 @@
 "jwt.wrongAlgorithm"       = "Identity token uses an unsupported algorithm.";
 "jwt.missingNonce"         = "Identity token is missing required security data.";
 "jwt.nonceMismatch"        = "Identity token failed a security check.";
+"jwt.atHashMismatch"       = "Identity token does not match the access token. Please sign in again.";
 "jwt.emailNotVerified"     = "Your email is not verified.";
 "jwt.missingRequiredClaim" = "Identity token is missing required information.";
 

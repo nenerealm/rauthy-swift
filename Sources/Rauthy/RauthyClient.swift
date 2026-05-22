@@ -154,7 +154,12 @@ public actor RauthyClient {
         )
 
         if let idToken = token.idToken {
-            try await validateIDToken(idToken, nonce: nonce, discovery: discovery)
+            try await validateIDToken(
+                idToken,
+                accessToken: token.accessToken,
+                nonce: nonce,
+                discovery: discovery
+            )
         } else if config.scopes.contains("openid") {
             // openid scope was requested but no ID token came back — surprising.
             config.logger.warning("openid scope requested but no id_token returned")
@@ -409,6 +414,7 @@ public actor RauthyClient {
 
     private func validateIDToken(
         _ idToken: IDToken,
+        accessToken: String,
         nonce: String,
         discovery: OpenIDConfiguration
     ) async throws {
@@ -436,13 +442,19 @@ public actor RauthyClient {
             jwk: key
         )
 
-        // 3. Verify the claims.
+        // 3. Verify the claims. The validation context pins issuer to the
+        // user-configured value (the root of authority), not the discovery
+        // document's issuer field. Discovery already verifies those match
+        // (`RauthyError.discoveryIssuerMismatch`), so this is defense in
+        // depth — if the discovery cache is somehow stale or compromised,
+        // the token-side check still anchors against config.
         let context = JWTClaimsValidator.Context(
-            issuer: discovery.issuer,
+            issuer: config.issuer,
             clientID: config.clientID,
             nonce: nonce,
             requireVerifiedEmail: config.requireVerifiedEmail,
-            allowedAlgorithms: config.allowedAlgorithms
+            allowedAlgorithms: config.allowedAlgorithms,
+            accessToken: accessToken
         )
         try JWTClaimsValidator.validate(idToken, against: context)
     }

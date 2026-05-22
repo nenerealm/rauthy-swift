@@ -34,6 +34,11 @@ public enum JWTValidationFailure: Sendable, Equatable, Error, LocalizedError {
     /// Token's `nonce` doesn't match the one sent in the authorization request.
     case nonceMismatch
 
+    /// Token's `at_hash` claim does not match `hash(access_token)` per
+    /// OIDC Core §3.1.3.6. Indicates the id_token and access_token were
+    /// not issued together — possible token substitution.
+    case atHashMismatch
+
     /// `email_verified` claim is missing or false, and the SDK requires verified email.
     case emailNotVerified
 
@@ -60,6 +65,8 @@ public enum JWTValidationFailure: Sendable, Equatable, Error, LocalizedError {
             return RauthyL10n.string("jwt.missingNonce")
         case .nonceMismatch:
             return RauthyL10n.string("jwt.nonceMismatch")
+        case .atHashMismatch:
+            return RauthyL10n.string("jwt.atHashMismatch")
         case .emailNotVerified:
             return RauthyL10n.string("jwt.emailNotVerified")
         case .missingRequiredClaim:

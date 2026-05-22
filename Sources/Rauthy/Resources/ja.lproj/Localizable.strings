@@ -3,6 +3,7 @@
 // MARK: - RauthyError (top-level)
 "error.invalidIssuerURL"           = "認証サーバーの URL が無効です。";
 "error.missingDiscoveryDocument"   = "認証サーバーに接続できませんでした。";
+"error.discoveryIssuerMismatch"    = "認証サーバーの設定がアプリの想定と異なります。サポートにお問い合わせください。";
 "error.missingPresentationContext" = "サインインの準備ができていません。サインイン画面を表示するウィンドウが見つかりません。";
 "error.userCancelled"              = "サインインがキャンセルされました。";
 "error.userInteractionRequired"    = "追加のサインイン手順が必要です。もう一度サインインしてください。";
@@ -41,6 +42,7 @@
 "jwt.wrongAlgorithm"       = "ID トークンが未対応のアルゴリズムを使用しています。";
 "jwt.missingNonce"         = "ID トークンにセキュリティ情報が含まれていません。";
 "jwt.nonceMismatch"        = "ID トークンがセキュリティチェックに失敗しました。";
+"jwt.atHashMismatch"       = "ID トークンとアクセストークンが一致しません。もう一度サインインしてください。";
 "jwt.emailNotVerified"     = "メールアドレスが未確認です。";
 "jwt.missingRequiredClaim" = "ID トークンに必要な情報が含まれていません。";
 

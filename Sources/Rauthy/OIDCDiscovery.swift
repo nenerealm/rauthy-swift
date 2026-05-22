@@ -70,24 +70,42 @@ public struct OpenIDConfiguration: Sendable, Codable, Equatable {
 public enum OIDCDiscovery {
     /// Fetch `<issuer>/.well-known/openid-configuration` and decode it.
     ///
-    /// - Throws: `RauthyError.missingDiscoveryDocument` on network or parse failure.
+    /// Verifies that the returned `issuer` field matches the URL the SDK
+    /// fetched it from (per OIDC Discovery 1.0 §4.3). A mismatch surfaces
+    /// as `RauthyError.discoveryIssuerMismatch` rather than being silently
+    /// accepted — this catches misconfigured or impersonating IdPs.
+    ///
+    /// - Throws: `RauthyError.missingDiscoveryDocument` on network or parse
+    ///   failure; `RauthyError.discoveryIssuerMismatch` if the document's
+    ///   `issuer` doesn't match the requested one (trailing slash tolerated).
     public static func fetch(
         issuer: URL,
         session: URLSession = .shared
     ) async throws -> OpenIDConfiguration {
         let url = discoveryURL(for: issuer)
 
+        let decoded: OpenIDConfiguration
         do {
             let (data, response) = try await session.data(from: url)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw RauthyError.missingDiscoveryDocument
             }
-            return try JSONDecoder().decode(OpenIDConfiguration.self, from: data)
+            decoded = try JSONDecoder().decode(OpenIDConfiguration.self, from: data)
         } catch is RauthyError {
             throw RauthyError.missingDiscoveryDocument
         } catch {
             throw RauthyError.missingDiscoveryDocument
         }
+
+        guard normalizeForComparison(decoded.issuer)
+            == normalizeForComparison(issuer)
+        else {
+            throw RauthyError.discoveryIssuerMismatch(
+                expected: issuer,
+                got: decoded.issuer
+            )
+        }
+        return decoded
     }
 
     /// Compute the discovery document URL for a given issuer. Public for tests.
@@ -95,6 +113,14 @@ public enum OIDCDiscovery {
         let issuerString = issuer.absoluteString
         let trimmed = issuerString.hasSuffix("/") ? String(issuerString.dropLast()) : issuerString
         return URL(string: "\(trimmed)/.well-known/openid-configuration")!
+    }
+
+    /// Strip a trailing slash so `https://x/auth/v1` and `https://x/auth/v1/`
+    /// compare equal — Rauthy publishes the trailing-slash form, callers
+    /// often configure without.
+    private static func normalizeForComparison(_ url: URL) -> String {
+        let s = url.absoluteString
+        return s.hasSuffix("/") ? String(s.dropLast()) : s
     }
 }
 

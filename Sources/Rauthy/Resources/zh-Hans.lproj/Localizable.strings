@@ -3,6 +3,7 @@
 // MARK: - RauthyError (top-level)
 "error.invalidIssuerURL"           = "身份服务地址无效。";
 "error.missingDiscoveryDocument"   = "无法连接到身份服务。";
+"error.discoveryIssuerMismatch"    = "身份服务的配置与本 App 期望的不符,请联系客服。";
 "error.missingPresentationContext" = "未准备好登录:App 缺少用于显示登录界面的窗口。";
 "error.userCancelled"              = "登录已取消。";
 "error.userInteractionRequired"    = "需要补充登录信息,请重新登录。";
@@ -41,6 +42,7 @@
 "jwt.wrongAlgorithm"       = "身份令牌使用了不支持的算法。";
 "jwt.missingNonce"         = "身份令牌缺少安全校验数据。";
 "jwt.nonceMismatch"        = "身份令牌未通过安全校验。";
+"jwt.atHashMismatch"       = "身份令牌与访问令牌不匹配,请重新登录。";
 "jwt.emailNotVerified"     = "你的邮箱尚未验证。";
 "jwt.missingRequiredClaim" = "身份令牌缺少必要信息。";
 

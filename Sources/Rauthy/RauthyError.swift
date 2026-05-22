@@ -15,6 +15,12 @@ public enum RauthyError: Error, Sendable, LocalizedError {
     /// Could not fetch `.well-known/openid-configuration` from the issuer.
     case missingDiscoveryDocument
 
+    /// The discovery document was fetched, but its `issuer` field does not
+    /// match the issuer URL the SDK was configured with. Per OIDC Discovery
+    /// 1.0 §4.3, these must be identical — a mismatch indicates a misconfigured
+    /// or potentially malicious IdP.
+    case discoveryIssuerMismatch(expected: URL, got: URL)
+
     /// `signIn()` was called before a presentation anchor was set up via
     /// `.rauthyPresentationContext()` SwiftUI modifier.
     case missingPresentationContext
@@ -79,6 +85,9 @@ extension RauthyError: Equatable {
              (.tokenExpired, .tokenExpired),
              (.reauthenticationRequired, .reauthenticationRequired):
             return true
+        case (.discoveryIssuerMismatch(let aExp, let aGot),
+              .discoveryIssuerMismatch(let bExp, let bGot)):
+            return aExp == bExp && aGot == bGot
         case (.oauth(let a), .oauth(let b)):
             return a == b
         case (.server(let a), .server(let b)):
@@ -131,6 +140,8 @@ extension RauthyError {
             return RauthyL10n.string("error.invalidIssuerURL")
         case .missingDiscoveryDocument:
             return RauthyL10n.string("error.missingDiscoveryDocument")
+        case .discoveryIssuerMismatch:
+            return RauthyL10n.string("error.discoveryIssuerMismatch")
         case .missingPresentationContext:
             return RauthyL10n.string("error.missingPresentationContext")
         case .userCancelled:
