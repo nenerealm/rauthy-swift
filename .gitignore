@@ -15,3 +15,6 @@ build/
 
 # SPM package lock — regenerate on `swift build`
 Package.resolved
+
+# Codex CLI session state (per-machine, runtime artifact)
+.context/
