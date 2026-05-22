@@ -118,14 +118,33 @@ public struct RauthyConfig: Sendable {
 
     /// Settings that only apply to local development. Should not be present
     /// in production configs.
+    ///
+    /// Two knobs, both enforced by `RauthyClient`:
+    ///
+    /// - ``allowInsecureHTTP`` is a precondition gate: `RauthyClient.init`
+    ///   refuses to construct against a plain-HTTP issuer URL unless this is
+    ///   `true`. Catches the "I copy-pasted dev config to prod" footgun.
+    /// - ``trustedSelfSignedCAs`` is consumed when `RauthyClient.init` derives
+    ///   its default `URLSession` — the session pins server trust against
+    ///   those anchor certificates so a Rauthy instance with its own CA
+    ///   (`LOCAL_TEST=true`) doesn't trip TLS validation. Pass your own
+    ///   `URLSession` to `init` to override.
+    ///
+    /// Note that this does NOT bypass App Transport Security. If your issuer
+    /// is `http://...`, you still need an `NSAppTransportSecurity` exception
+    /// in your app's Info.plist (or use `NSAllowsLocalNetworking` for the
+    /// localhost case).
     public struct LocalDevSettings: Sendable {
-        /// Allow `http://` (non-TLS) issuer URLs. Required for localhost dev
-        /// where you don't have a TLS cert. Refused for any non-localhost host.
+        /// Allow plain `http://` issuer URLs at `RauthyClient.init` time.
+        /// Required for localhost dev where you don't have a TLS cert. Has
+        /// no effect on ATS — configure your Info.plist separately.
         public let allowInsecureHTTP: Bool
 
-        /// Self-signed CA certificates to trust when talking to the issuer.
-        /// Use when running Rauthy with `LOCAL_TEST=true` (it generates its
-        /// own CA on first start).
+        /// Self-signed CA certificates (DER-encoded) to add as trust anchors
+        /// when talking to the issuer. Applied via a URLSession delegate that
+        /// `RauthyClient` constructs for you. Use when running Rauthy with
+        /// `LOCAL_TEST=true` (it generates its own CA on first start —
+        /// usually written to `rauthy.local.dev.pem` or similar).
         public let trustedSelfSignedCAs: [Data]
 
         public init(allowInsecureHTTP: Bool, trustedSelfSignedCAs: [Data]) {

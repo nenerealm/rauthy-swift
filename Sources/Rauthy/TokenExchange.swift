@@ -117,7 +117,7 @@ public enum TokenExchange {
             throw RauthyError.server(ServerError(
                 statusCode: 200,
                 errorCode: "unsupported_token_type",
-                message: "Server returned token_type=\(typeString); only Bearer is supported in v0.1"
+                message: "Server returned token_type=\(typeString); only Bearer is supported in this SDK version (DPoP arrives in v1.1)"
             ))
         }
 

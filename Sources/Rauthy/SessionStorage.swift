@@ -19,11 +19,9 @@ public protocol SessionStorage: Sendable {
 // MARK: - Default factory
 
 extension SessionStorage where Self == KeychainStorage {
-    /// Returns a Keychain-backed storage. **Not yet implemented in v0.1** —
-    /// throws `RauthyError.keychainError(.osStatus(-1))` until implementation
-    /// lands in the next session.
-    ///
-    /// Use `InMemoryStorage()` for v0.1 testing.
+    /// Returns a Keychain-backed storage with the given service name.
+    /// Convenience over calling `KeychainStorage(service:)` directly when
+    /// you want SDK-default account naming and no access group.
     public static func keychain(
         service: String = "com.rauthy.swift"
     ) -> KeychainStorage {
@@ -35,9 +33,10 @@ extension SessionStorage where Self == KeychainStorage {
 
 /// An in-memory storage backend that holds a single token in memory.
 ///
-/// Use for testing or for v0.1 demos where token persistence across app
-/// restarts isn't yet needed. Production apps should use a Keychain-backed
-/// implementation once available.
+/// Use for tests and for cases where token persistence across app restarts
+/// is undesirable (kiosk mode, ephemeral sessions). Production apps that
+/// want the user to stay signed in across launches should use
+/// `KeychainStorage` instead.
 public actor InMemoryStorage: SessionStorage {
     private var token: Token?
 
@@ -63,8 +62,8 @@ public actor InMemoryStorage: SessionStorage {
 /// background tasks (after the first device unlock) but never leaves the
 /// device and is not iCloud-synced.
 ///
-/// v0.1 stores a single token under a fixed account name. Multi-account
-/// support arrives in v1.5+.
+/// Stores a single token under a fixed account name. Multi-account support
+/// arrives in v1.5+.
 public actor KeychainStorage: SessionStorage {
     private let service: String
     private let account: String

@@ -49,10 +49,17 @@ public enum AuthorizationURLBuilder {
             throw RauthyError.oauth(OAuthError(code: .invalidRequest, description: "callback has no query parameters"))
         }
 
-        let dict = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (String, String)? in
-            guard let value = item.value else { return nil }
-            return (item.name, value)
-        })
+        // Accumulate rather than `Dictionary(uniqueKeysWithValues:)`: a
+        // malicious or buggy caller can deliver a custom-scheme URL with
+        // duplicate query parameters (`?code=a&code=b`), and the uniqueing
+        // initializer traps on duplicates. Last value wins — matches how
+        // most HTTP stacks (and the spec's PRECEDENCE-undefined wording)
+        // resolve repeats.
+        var dict: [String: String] = [:]
+        for item in items {
+            guard let value = item.value else { continue }
+            dict[item.name] = value
+        }
 
         if let errorCode = dict["error"] {
             let oauthCode = OAuthError.Code(rawValue: errorCode) ?? .serverError
