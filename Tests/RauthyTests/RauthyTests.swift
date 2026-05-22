@@ -2391,3 +2391,156 @@ final class LocalizationTests {
         #expect(identifiers.contains("ja"))
     }
 }
+
+// MARK: - parseCallback robustness against duplicate query params
+
+@Suite("AuthorizationURLBuilder.parseCallback duplicates")
+struct ParseCallbackDuplicateTests {
+    @Test("does not crash on duplicate code params; last value wins")
+    func duplicateCodeParam() throws {
+        // Pre-fix this would trap inside Dictionary(uniqueKeysWithValues:)
+        // because two `code` items collide. Now it must succeed and prefer
+        // the last value (matching common HTTP framework conventions).
+        let url = URL(string: "myapp://cb?code=first&code=second&state=xyz")!
+        let (code, state) = try AuthorizationURLBuilder.parseCallback(url)
+        #expect(code == "second")
+        #expect(state == "xyz")
+    }
+
+    @Test("does not crash on duplicate state params")
+    func duplicateStateParam() throws {
+        let url = URL(string: "myapp://cb?code=abc&state=one&state=two")!
+        let (code, state) = try AuthorizationURLBuilder.parseCallback(url)
+        #expect(code == "abc")
+        #expect(state == "two")
+    }
+
+    @Test("does not crash on duplicate error params; surfaces last")
+    func duplicateErrorParam() {
+        let url = URL(string: "myapp://cb?error=access_denied&error=server_error")!
+        do {
+            _ = try AuthorizationURLBuilder.parseCallback(url)
+            Issue.record("expected throw")
+        } catch RauthyError.oauth(let err) {
+            // Either value is acceptable per the spec — the important thing
+            // is we didn't crash. We assert "last wins" to lock in behavior.
+            #expect(err.code == .serverError)
+        } catch {
+            Issue.record("expected RauthyError.oauth, got \(error)")
+        }
+    }
+}
+
+// MARK: - Issuer scheme validation
+
+@Suite("RauthyClient.issuerSchemeValidation")
+struct IssuerSchemeValidationTests {
+    @Test("https issuer passes")
+    func httpsAllowed() {
+        let config = makeConfig(issuer: "https://auth.example.com", localDev: nil)
+        #expect(RauthyClient.issuerSchemeValidation(for: config) == .ok)
+    }
+
+    @Test("http issuer without localDev is rejected")
+    func httpWithoutLocalDev() {
+        let config = makeConfig(issuer: "http://localhost:8080", localDev: nil)
+        let url = URL(string: "http://localhost:8080")!
+        #expect(
+            RauthyClient.issuerSchemeValidation(for: config)
+                == .insecureHTTPNotAllowed(url)
+        )
+    }
+
+    @Test("http issuer with localDev but allowInsecureHTTP=false is rejected")
+    func httpWithLocalDevDisabled() {
+        let config = makeConfig(
+            issuer: "http://localhost:8080",
+            localDev: RauthyConfig.LocalDevSettings(
+                allowInsecureHTTP: false,
+                trustedSelfSignedCAs: []
+            )
+        )
+        let url = URL(string: "http://localhost:8080")!
+        #expect(
+            RauthyClient.issuerSchemeValidation(for: config)
+                == .insecureHTTPNotAllowed(url)
+        )
+    }
+
+    @Test("http issuer with localDev.allowInsecureHTTP=true passes")
+    func httpWithLocalDevEnabled() {
+        let config = makeConfig(
+            issuer: "http://localhost:8080",
+            localDev: RauthyConfig.LocalDevSettings(
+                allowInsecureHTTP: true,
+                trustedSelfSignedCAs: []
+            )
+        )
+        #expect(RauthyClient.issuerSchemeValidation(for: config) == .ok)
+    }
+
+    @Test("non-http(s) scheme is rejected even with localDev enabled")
+    func nonHTTPScheme() {
+        let config = makeConfig(
+            issuer: "ftp://example.com",
+            localDev: RauthyConfig.LocalDevSettings(
+                allowInsecureHTTP: true,
+                trustedSelfSignedCAs: []
+            )
+        )
+        let url = URL(string: "ftp://example.com")!
+        #expect(
+            RauthyClient.issuerSchemeValidation(for: config)
+                == .unsupportedScheme(url)
+        )
+    }
+
+    private func makeConfig(
+        issuer: String,
+        localDev: RauthyConfig.LocalDevSettings?
+    ) -> RauthyConfig {
+        RauthyConfig(
+            issuer: URL(string: issuer)!,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://cb")!,
+            userClaim: .any,
+            adminClaim: .none,
+            localDev: localDev
+        )
+    }
+}
+
+// MARK: - LocalDev URLSession factory
+
+@Suite("LocalDevURLSession")
+struct LocalDevURLSessionTests {
+    @Test("empty trustedSelfSignedCAs returns URLSession.shared")
+    func emptyReturnsShared() {
+        let session = LocalDevURLSession.make(
+            settings: RauthyConfig.LocalDevSettings(
+                allowInsecureHTTP: true,
+                trustedSelfSignedCAs: []
+            )
+        )
+        // Identity check: there's only one .shared per process.
+        #expect(session === URLSession.shared)
+    }
+
+    @Test("populated trustedSelfSignedCAs returns a non-shared session")
+    func populatedReturnsCustom() {
+        // The bytes don't have to be a real cert for this test — we're
+        // verifying the factory routes through the delegate path, not that
+        // the cert parses. SecCertificateCreateWithData will return nil for
+        // junk and the delegate's anchor list will be empty, which is fine
+        // for the wiring check.
+        let session = LocalDevURLSession.make(
+            settings: RauthyConfig.LocalDevSettings(
+                allowInsecureHTTP: false,
+                trustedSelfSignedCAs: [Data([0x30, 0x82, 0x00, 0x00])]
+            )
+        )
+        #expect(session !== URLSession.shared)
+        // Sanity: delegate slot is occupied.
+        #expect(session.delegate != nil)
+    }
+}

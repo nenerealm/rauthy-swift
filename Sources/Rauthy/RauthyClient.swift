@@ -29,11 +29,70 @@ public actor RauthyClient {
     public init(
         config: RauthyConfig,
         storage: any SessionStorage = InMemoryStorage(),
-        urlSession: URLSession = .shared
+        urlSession: URLSession? = nil
     ) {
+        Self.validateIssuerScheme(config: config)
         self.config = config
         self.storage = storage
-        self.urlSession = urlSession
+        self.urlSession = urlSession ?? Self.defaultURLSession(for: config)
+    }
+
+    /// Derive a URLSession from `config.localDev`. With no localDev settings,
+    /// returns `URLSession.shared`. With `trustedSelfSignedCAs` populated,
+    /// returns a session whose delegate evaluates server trust against those
+    /// anchor certificates. Callers can still override by passing a custom
+    /// session to `init`.
+    private static func defaultURLSession(for config: RauthyConfig) -> URLSession {
+        if let localDev = config.localDev {
+            return LocalDevURLSession.make(settings: localDev)
+        }
+        return .shared
+    }
+
+    /// Refuse to construct a client against a plain-HTTP issuer unless
+    /// `localDev.allowInsecureHTTP` is explicitly true. This catches the
+    /// "I copy-pasted the dev config into production" footgun before any
+    /// network traffic happens. Reachable via the standard `init`, so it
+    /// also runs for callers who built their own `RauthyConfig`.
+    private static func validateIssuerScheme(config: RauthyConfig) {
+        switch issuerSchemeValidation(for: config) {
+        case .ok:
+            return
+        case .insecureHTTPNotAllowed(let url):
+            preconditionFailure(
+                "RauthyConfig.issuer uses insecure http:// (\(url)) but localDev.allowInsecureHTTP is not enabled. Use RauthyConfig.development(...) for local testing, or change the issuer to https://."
+            )
+        case .unsupportedScheme(let url):
+            preconditionFailure(
+                "RauthyConfig.issuer must use http(s):// scheme; got \(url)"
+            )
+        }
+    }
+
+    /// Non-trapping form of the issuer scheme check, exposed `internal` so
+    /// the test target can exercise each branch without crashing the suite.
+    /// `validateIssuerScheme` wraps this and turns failures into
+    /// `preconditionFailure` calls.
+    internal enum IssuerSchemeValidation: Equatable, Sendable {
+        case ok
+        case insecureHTTPNotAllowed(URL)
+        case unsupportedScheme(URL)
+    }
+
+    internal static func issuerSchemeValidation(
+        for config: RauthyConfig
+    ) -> IssuerSchemeValidation {
+        let scheme = config.issuer.scheme?.lowercased() ?? ""
+        switch scheme {
+        case "https":
+            return .ok
+        case "http":
+            return config.localDev?.allowInsecureHTTP == true
+                ? .ok
+                : .insecureHTTPNotAllowed(config.issuer)
+        default:
+            return .unsupportedScheme(config.issuer)
+        }
     }
 
     // MARK: - Sign in
@@ -227,10 +286,10 @@ public actor RauthyClient {
     /// token has expired (or will expire within `graceInterval` seconds) and
     /// a refresh token is available.
     ///
-    /// > Note: v0.1 does not coalesce concurrent refresh attempts. Two
-    /// > parallel callers may each trigger a refresh; in practice the second
-    /// > will fail (the server has already rotated the refresh token).
-    /// > Single-flight coalescing arrives in v0.2.
+    /// Concurrent callers coalesce into a single refresh: the second caller
+    /// awaits the first call's result rather than firing a parallel refresh
+    /// (which would fail anyway — Rauthy rotates refresh tokens, so first
+    /// use wins). See `parallelCallersCoalesce` test.
     public func validAccessToken(graceInterval: TimeInterval = 60) async throws -> String {
         guard var token = try await storage.load() else {
             throw RauthyError.reauthenticationRequired
