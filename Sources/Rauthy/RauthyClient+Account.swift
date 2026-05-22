@@ -92,14 +92,7 @@ extension RauthyClient {
             throw RauthyError.reauthenticationRequired
         }
         if http.statusCode >= 400 {
-            // Try to decode an OAuth-style error first.
-            if let oauthError = try? JSONDecoder().decode(OAuthError.self, from: data) {
-                throw RauthyError.oauth(oauthError)
-            }
-            throw RauthyError.server(ServerError(
-                statusCode: http.statusCode,
-                message: String(data: data, encoding: .utf8)
-            ))
+            throw decodeServerErrorResponse(statusCode: http.statusCode, data: data)
         }
         return (data, http)
     }

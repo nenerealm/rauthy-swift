@@ -18,7 +18,13 @@ public actor RauthyClient {
     internal let storage: any SessionStorage
     internal let urlSession: URLSession
 
-    private var cachedDiscovery: OpenIDConfiguration?
+    /// How long the cached discovery document stays fresh. After this
+    /// elapses, the next `discoveryDocument()` call refetches. JWKS is also
+    /// cleared on the same beat (kid rotation usually coincides with
+    /// endpoint config changes, and the cache is small).
+    private let discoveryTTL: TimeInterval
+
+    private var cachedDiscovery: (config: OpenIDConfiguration, fetchedAt: Date)?
     private var cachedJWKS: JWKSet?
 
     /// In-flight refresh task. When non-nil, concurrent callers wait on this
@@ -29,12 +35,22 @@ public actor RauthyClient {
     public init(
         config: RauthyConfig,
         storage: any SessionStorage = InMemoryStorage(),
-        urlSession: URLSession? = nil
+        urlSession: URLSession? = nil,
+        discoveryTTL: TimeInterval = 3600
     ) {
         Self.validateIssuerScheme(config: config)
         self.config = config
         self.storage = storage
         self.urlSession = urlSession ?? Self.defaultURLSession(for: config)
+        self.discoveryTTL = discoveryTTL
+    }
+
+    /// Drop the cached discovery document and JWKS, forcing the next call to
+    /// refetch from the issuer. Useful when you know the IdP config has
+    /// changed (rotation, redeploy) and don't want to wait for the TTL.
+    public func invalidateDiscoveryCache() {
+        cachedDiscovery = nil
+        cachedJWKS = nil
     }
 
     /// Derive a URLSession from `config.localDev`. With no localDev settings,
@@ -107,9 +123,19 @@ public actor RauthyClient {
     /// 6. Validate ID token signature + claims.
     /// 7. Persist token via `SessionStorage`.
     ///
-    /// - Parameter anchor: The window to anchor the auth UI to.
+    /// - Parameters:
+    ///   - anchor: The window to anchor the auth UI to.
+    ///   - prefersEphemeralWebBrowserSession: When `true`, no cookies are
+    ///     shared with Safari — the auth sheet runs in a sandboxed jar.
+    ///     Recommended when you want every sign-in to require a fresh
+    ///     credential entry (no "auto-selected from prior session" footgun).
+    ///     Defaults to `false` to match `ASWebAuthenticationSession`'s own
+    ///     default — set `true` for security-sensitive apps.
     /// - Returns: The newly-issued token.
-    public func signIn(anchor: ASPresentationAnchor) async throws -> Token {
+    public func signIn(
+        anchor: ASPresentationAnchor,
+        prefersEphemeralWebBrowserSession: Bool = false
+    ) async throws -> Token {
         let discovery = try await discoveryDocument()
 
         let pkce = PKCE()
@@ -136,7 +162,8 @@ public actor RauthyClient {
         let callbackURL = try await WebAuthBridge.authenticate(
             url: authURL,
             callbackScheme: callbackScheme,
-            anchor: anchor
+            anchor: anchor,
+            prefersEphemeralWebBrowserSession: prefersEphemeralWebBrowserSession
         )
 
         let (code, returnedState) = try AuthorizationURLBuilder.parseCallback(callbackURL)
@@ -167,7 +194,13 @@ public actor RauthyClient {
 
         try await storage.save(token)
 
-        config.logger.info("Sign-in succeeded", metadata: [
+        // Sub is a stable user identifier; log at info without it (the fact
+        // that sign-in succeeded is the part most monitoring cares about),
+        // include sub only at debug for diagnostic spelunking. OSLogHandler
+        // marks metadata `.public`, so info-level identifiers would be
+        // visible in Console.app on shipped builds.
+        config.logger.info("Sign-in succeeded")
+        config.logger.debug("Sign-in token issued", metadata: [
             "sub": "\(token.idToken?.payload.sub ?? "unknown")",
         ])
 
@@ -227,15 +260,23 @@ public actor RauthyClient {
             guard let anchor else { throw RauthyError.missingPresentationContext }
             // Try revoke first (so server invalidates even if the web flow fails).
             // Don't throw on revoke failure — we still want to drive the user
-            // through RP-Initiated as a fallback.
+            // through RP-Initiated as a fallback — but log it so operators
+            // can see the server-side session may be lingering.
+            var revokeSucceeded = false
             if let token {
-                let discovery = try? await discoveryDocument()
-                if let discovery {
-                    try? await TokenRevocation.revoke(
+                do {
+                    let discovery = try await discoveryDocument()
+                    try await TokenRevocation.revoke(
                         token: token,
                         config: config,
                         discovery: discovery,
                         session: urlSession
+                    )
+                    revokeSucceeded = true
+                } catch {
+                    config.logger.warning(
+                        "Token revocation failed during .full sign-out; continuing with RP-Initiated",
+                        metadata: ["error": "\(error)"]
                     )
                 }
             }
@@ -245,7 +286,10 @@ public actor RauthyClient {
                 anchor: anchor
             )
             try await storage.clear()
-            config.logger.info("Full sign-out (revoke + RP-Initiated) complete")
+            config.logger.info(
+                "Full sign-out complete",
+                metadata: ["revoked": "\(revokeSucceeded)"]
+            )
         }
     }
 
@@ -391,14 +435,18 @@ public actor RauthyClient {
     }
 
     private func discoveryDocument() async throws -> OpenIDConfiguration {
-        if let cached = cachedDiscovery {
-            return cached
+        if let cached = cachedDiscovery,
+           Date().timeIntervalSince(cached.fetchedAt) < discoveryTTL {
+            return cached.config
         }
         let discovery = try await OIDCDiscovery.fetch(
             issuer: config.issuer,
             session: urlSession
         )
-        cachedDiscovery = discovery
+        cachedDiscovery = (discovery, Date())
+        // Endpoint rotation often coincides with JWKS rotation; drop the
+        // JWKS cache too so the next signature check picks up new keys.
+        cachedJWKS = nil
         return discovery
     }
 

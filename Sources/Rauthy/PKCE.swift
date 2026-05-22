@@ -35,10 +35,39 @@ public struct PKCE: Sendable, Equatable {
         self.codeChallenge = challenge
     }
 
-    /// Construct from an existing verifier (for testing or token refresh paths).
+    /// Construct from an existing verifier. Mainly used by tests; production
+    /// code calls `PKCE()` to generate a fresh pair.
+    ///
+    /// **Precondition:** the verifier must conform to RFC 7636 §4.1 —
+    /// 43–128 characters from the set `[A-Z][a-z][0-9]-._~`. Non-conforming
+    /// input traps with `preconditionFailure`. Callers who want to test
+    /// validity before constructing can use `PKCE.isValidVerifier(_:)`.
     public init(codeVerifier: String) {
+        precondition(
+            PKCE.isValidVerifier(codeVerifier),
+            "PKCE code verifier must be 43-128 chars from [A-Z][a-z][0-9]-._~ (RFC 7636 §4.1); got \(codeVerifier.count) chars"
+        )
         self.codeVerifier = codeVerifier
         let hash = SHA256.hash(data: Data(codeVerifier.utf8))
         self.codeChallenge = Data(hash).base64URLEncodedString()
+    }
+
+    /// Whether `verifier` satisfies the RFC 7636 §4.1 grammar:
+    /// 43–128 characters drawn from `ALPHA / DIGIT / "-" / "." / "_" / "~"`.
+    /// Use this to pre-validate input from untrusted sources.
+    public static func isValidVerifier(_ verifier: String) -> Bool {
+        let count = verifier.count
+        guard count >= 43, count <= 128 else { return false }
+        for char in verifier.unicodeScalars {
+            switch char {
+            case "A"..."Z", "a"..."z", "0"..."9":
+                continue
+            case "-", ".", "_", "~":
+                continue
+            default:
+                return false
+            }
+        }
+        return true
     }
 }

@@ -398,8 +398,11 @@ struct PKCETests {
 
     @Test("challenge is SHA-256 of verifier")
     func challengeIsSHA256() {
-        let pkce = PKCE(codeVerifier: "test-verifier-12345")
-        let expected = Data(SHA256.hash(data: Data("test-verifier-12345".utf8)))
+        // RFC 7636 §4.1 requires 43-128 chars from a restricted set; pick a
+        // verifier the size of a default-generated one for parity with prod.
+        let verifier = "test-verifier-AAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        let pkce = PKCE(codeVerifier: verifier)
+        let expected = Data(SHA256.hash(data: Data(verifier.utf8)))
             .base64URLEncodedString()
         #expect(pkce.codeChallenge == expected)
     }
@@ -481,7 +484,7 @@ struct AuthorizationURLBuilderTests {
             adminClaim: .none
         )
         let discovery = makeDiscovery()
-        let pkce = PKCE(codeVerifier: "test-verifier")
+        let pkce = PKCE(codeVerifier: "test-verifier-AAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         let url = AuthorizationURLBuilder.build(
             config: config,
             discovery: discovery,
@@ -2840,6 +2843,214 @@ struct DiscoveryIssuerPinningTests {
             #expect(got.absoluteString == "https://attacker.example.com")
         } catch {
             Issue.record("expected discoveryIssuerMismatch, got \(error)")
+        }
+    }
+}
+
+// MARK: - PKCE verifier validation (RFC 7636 §4.1)
+
+@Suite("PKCE.isValidVerifier")
+struct PKCEVerifierValidationTests {
+    @Test("43-char all-alphanumeric verifier is valid")
+    func minimumLengthValid() {
+        let v = String(repeating: "A", count: 43)
+        #expect(PKCE.isValidVerifier(v))
+    }
+
+    @Test("128-char all-alphanumeric verifier is valid")
+    func maximumLengthValid() {
+        let v = String(repeating: "z", count: 128)
+        #expect(PKCE.isValidVerifier(v))
+    }
+
+    @Test("42 chars (one below minimum) is invalid")
+    func belowMinimumInvalid() {
+        let v = String(repeating: "A", count: 42)
+        #expect(!PKCE.isValidVerifier(v))
+    }
+
+    @Test("129 chars (one above maximum) is invalid")
+    func aboveMaximumInvalid() {
+        let v = String(repeating: "A", count: 129)
+        #expect(!PKCE.isValidVerifier(v))
+    }
+
+    @Test("disallowed characters (space, +, /) reject")
+    func disallowedChars() {
+        let base = String(repeating: "A", count: 42)
+        #expect(!PKCE.isValidVerifier(base + " "))     // space
+        #expect(!PKCE.isValidVerifier(base + "+"))     // base64 char, not unreserved
+        #expect(!PKCE.isValidVerifier(base + "/"))
+        #expect(!PKCE.isValidVerifier(base + "="))     // padding
+    }
+
+    @Test("allowed unreserved chars are accepted")
+    func allowedUnreservedChars() {
+        // RFC 3986 unreserved: ALPHA / DIGIT / "-" / "." / "_" / "~"
+        let v = "Aa0-._~" + String(repeating: "z", count: 36)  // 43 chars
+        #expect(PKCE.isValidVerifier(v))
+    }
+
+    @Test("default PKCE() produces a valid verifier")
+    func defaultIsValid() {
+        for _ in 0..<10 {
+            let pkce = PKCE()
+            #expect(PKCE.isValidVerifier(pkce.codeVerifier))
+        }
+    }
+}
+
+// MARK: - Discovery cache TTL + invalidation
+
+@Suite("RauthyClient discovery cache")
+struct DiscoveryCacheTests {
+    @Test("invalidateDiscoveryCache forces refetch")
+    func invalidateRefetches() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        nonisolated(unsafe) var discoveryFetches = 0
+        let lock = NSLock()
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                lock.lock(); discoveryFetches += 1; lock.unlock()
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "userinfo_endpoint": "https://auth.example.com/userinfo",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            // /userinfo
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            { "id": "u", "sub": "u", "roles": [] }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeToken())
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+
+        _ = try await client.fetchUser()
+        #expect(discoveryFetches == 1)
+
+        // Second call within TTL — no refetch.
+        _ = try await client.fetchUser()
+        #expect(discoveryFetches == 1)
+
+        // Invalidate, third call refetches.
+        await client.invalidateDiscoveryCache()
+        _ = try await client.fetchUser()
+        #expect(discoveryFetches == 2)
+    }
+
+    @Test("TTL=0 refetches every time")
+    func zeroTTLAlwaysRefetches() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+
+        nonisolated(unsafe) var discoveryFetches = 0
+        let lock = NSLock()
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                lock.lock(); discoveryFetches += 1; lock.unlock()
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let body = """
+                {
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "userinfo_endpoint": "https://auth.example.com/userinfo",
+                    "jwks_uri": "https://auth.example.com/jwks",
+                    "response_types_supported": ["code"]
+                }
+                """
+                return (response, Data(body.utf8))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data("""
+            { "id": "u", "sub": "u", "roles": [] }
+            """.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let storage = InMemoryStorage()
+        try await storage.save(WireTestHelpers.makeToken())
+        let client = RauthyClient(
+            config: config,
+            storage: storage,
+            urlSession: session,
+            discoveryTTL: 0
+        )
+
+        _ = try await client.fetchUser()
+        _ = try await client.fetchUser()
+        #expect(discoveryFetches == 2)
+    }
+}
+
+// MARK: - Rauthy server error envelope decoding (M4)
+
+@Suite("Server error envelope decoding")
+struct ServerErrorEnvelopeTests {
+    @Test("OAuth-format error is decoded as RauthyError.oauth")
+    func decodesOAuth() {
+        let data = Data(#"{"error":"invalid_grant","error_description":"expired"}"#.utf8)
+        let err = decodeServerErrorResponse(statusCode: 400, data: data)
+        if case .oauth(let inner) = err {
+            #expect(inner.code == .invalidGrant)
+            #expect(inner.description == "expired")
+        } else {
+            Issue.record("expected .oauth, got \(err)")
+        }
+    }
+
+    @Test("Rauthy private envelope is decoded as RauthyError.server with errorCode + message")
+    func decodesRauthyEnvelope() {
+        // Real observed shape from production iris.misspinkelf.com.
+        let data = Data(#"{"timestamp":1779477077,"error":"NotFound","message":"no rows returned"}"#.utf8)
+        let err = decodeServerErrorResponse(statusCode: 404, data: data)
+        if case .server(let inner) = err {
+            #expect(inner.statusCode == 404)
+            #expect(inner.errorCode == "NotFound")
+            #expect(inner.message == "no rows returned")
+        } else {
+            Issue.record("expected .server, got \(err)")
+        }
+    }
+
+    @Test("Unknown JSON falls through to ServerError.message=raw")
+    func fallsThroughOnUnknownShape() {
+        let raw = #"{"random":"shape","foo":[1,2,3]}"#
+        let data = Data(raw.utf8)
+        let err = decodeServerErrorResponse(statusCode: 500, data: data)
+        if case .server(let inner) = err {
+            #expect(inner.statusCode == 500)
+            #expect(inner.errorCode == nil)
+            #expect(inner.message == raw)
+        } else {
+            Issue.record("expected .server, got \(err)")
+        }
+    }
+
+    @Test("Non-JSON body falls through with raw string in message")
+    func fallsThroughOnNonJSON() {
+        let data = Data("502 Bad Gateway".utf8)
+        let err = decodeServerErrorResponse(statusCode: 502, data: data)
+        if case .server(let inner) = err {
+            #expect(inner.statusCode == 502)
+            #expect(inner.message == "502 Bad Gateway")
+        } else {
+            Issue.record("expected .server, got \(err)")
         }
     }
 }

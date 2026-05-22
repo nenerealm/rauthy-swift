@@ -80,7 +80,11 @@ public final class RauthyAuthState: ObservableObject {
 
     /// Drive the full PKCE sign-in flow. Requires `.rauthyPresentationContext()`
     /// to have run somewhere in the view hierarchy.
-    public func signIn() async {
+    ///
+    /// - Parameter prefersEphemeralWebBrowserSession: forwarded to
+    ///   `RauthyClient.signIn(anchor:prefersEphemeralWebBrowserSession:)`.
+    ///   See its docs for when to enable.
+    public func signIn(prefersEphemeralWebBrowserSession: Bool = false) async {
         guard let anchor = CurrentWindowHolder.shared.window else {
             lastError = .missingPresentationContext
             return
@@ -88,7 +92,10 @@ public final class RauthyAuthState: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
-            _ = try await client.signIn(anchor: anchor)
+            _ = try await client.signIn(
+                anchor: anchor,
+                prefersEphemeralWebBrowserSession: prefersEphemeralWebBrowserSession
+            )
             var user: User? = try? await client.fetchUser()
             if user == nil {
                 user = await userFromCurrentToken()

@@ -95,13 +95,7 @@ public enum TokenExchange {
         }
 
         if http.statusCode != 200 {
-            if let oauthError = try? JSONDecoder().decode(OAuthError.self, from: data) {
-                throw RauthyError.oauth(oauthError)
-            }
-            throw RauthyError.server(ServerError(
-                statusCode: http.statusCode,
-                message: String(data: data, encoding: .utf8)
-            ))
+            throw decodeServerErrorResponse(statusCode: http.statusCode, data: data)
         }
 
         let body2: TokenResponse
