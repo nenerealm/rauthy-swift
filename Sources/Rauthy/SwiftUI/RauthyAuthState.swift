@@ -103,8 +103,14 @@ public final class RauthyAuthState: ObservableObject {
             if let user {
                 status = .signedIn(user)
             } else {
+                // signIn returned (so a valid token is in storage), but we
+                // couldn't materialize a User from /userinfo OR from a local
+                // ID token. This is almost always a network blip — surface
+                // it as such rather than .reauthenticationRequired, which
+                // implies the user did something wrong. A retry (or next
+                // app launch's bootstrap) will recover.
                 status = .signedOut
-                lastError = .reauthenticationRequired
+                lastError = .networkUnavailable
             }
         } catch RauthyError.userCancelled {
             // User dismissed the sheet — not an error.

@@ -75,9 +75,13 @@ public enum OIDCDiscovery {
     /// as `RauthyError.discoveryIssuerMismatch` rather than being silently
     /// accepted — this catches misconfigured or impersonating IdPs.
     ///
-    /// - Throws: `RauthyError.missingDiscoveryDocument` on network or parse
-    ///   failure; `RauthyError.discoveryIssuerMismatch` if the document's
-    ///   `issuer` doesn't match the requested one (trailing slash tolerated).
+    /// - Throws:
+    ///   - `RauthyError.networkUnavailable` if the request itself fails at
+    ///     the transport layer (DNS, TLS, timeout, no connection)
+    ///   - `RauthyError.missingDiscoveryDocument` for non-200 responses or
+    ///     when the JSON body fails to decode
+    ///   - `RauthyError.discoveryIssuerMismatch` if the document's `issuer`
+    ///     doesn't match the requested one (trailing slash tolerated)
     public static func fetch(
         issuer: URL,
         session: URLSession = .shared
@@ -91,9 +95,16 @@ public enum OIDCDiscovery {
                 throw RauthyError.missingDiscoveryDocument
             }
             decoded = try JSONDecoder().decode(OpenIDConfiguration.self, from: data)
+        } catch is URLError {
+            // Transport-layer failure (DNS, TLS, timeout, offline). Distinct
+            // from "server returned non-200" so callers can surface a more
+            // accurate "check your connection" message.
+            throw RauthyError.networkUnavailable
         } catch is RauthyError {
             throw RauthyError.missingDiscoveryDocument
         } catch {
+            // JSON decode or other unexpected failure — treat as missing
+            // document since we can't usefully act on the issuer's response.
             throw RauthyError.missingDiscoveryDocument
         }
 

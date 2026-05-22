@@ -243,7 +243,18 @@ extension RauthyClient {
             relativePath: "users/{id}/self/delete"
         )
         _ = try await executeAuthenticated(request)
-        // On success, clear local storage.
-        try? await storage.clear()
+        // Server-side deletion succeeded. Try to drop the local token too —
+        // a Keychain failure here doesn't change the outcome (the next API
+        // call will 401), but we should at least leave a breadcrumb so an
+        // operator wading through logs can tell why a "deleted" account
+        // still has stale credentials on disk.
+        do {
+            try await storage.clear()
+        } catch {
+            config.logger.warning(
+                "Account deletion succeeded server-side but local storage clear failed",
+                metadata: ["error": "\(error)"]
+            )
+        }
     }
 }
