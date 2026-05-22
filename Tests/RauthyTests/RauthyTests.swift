@@ -2544,3 +2544,302 @@ struct LocalDevURLSessionTests {
         #expect(session.delegate != nil)
     }
 }
+
+// MARK: - nbf (not-before) validation
+
+@Suite("JWTClaimsValidator nbf")
+struct NotBeforeValidationTests {
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    @Test("nbf in the past passes")
+    func nbfInPast() throws {
+        let context = makeContext()
+        let idToken = makeIDToken(nbf: now.addingTimeInterval(-3600))
+        try JWTClaimsValidator.validate(idToken, against: context, now: now)
+    }
+
+    @Test("nbf in the future beyond leeway throws .notYetValid")
+    func nbfInFutureBeyondLeeway() {
+        let context = makeContext()  // default leeway 60s
+        let idToken = makeIDToken(nbf: now.addingTimeInterval(300))  // 5 min ahead
+        do {
+            try JWTClaimsValidator.validate(idToken, against: context, now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.notYetValid) {
+            // ok
+        } catch {
+            Issue.record("expected notYetValid, got \(error)")
+        }
+    }
+
+    @Test("nbf within leeway passes")
+    func nbfWithinLeeway() throws {
+        let context = makeContext()  // leeway 60s
+        let idToken = makeIDToken(nbf: now.addingTimeInterval(30))  // 30s ahead
+        try JWTClaimsValidator.validate(idToken, against: context, now: now)
+    }
+
+    @Test("absent nbf passes")
+    func absentNbf() throws {
+        let context = makeContext()
+        let idToken = makeIDToken(nbf: nil)
+        try JWTClaimsValidator.validate(idToken, against: context, now: now)
+    }
+
+    @Test("IDTokenClaims decodes nbf when present")
+    func decodesNbf() throws {
+        let json = """
+        {
+            "sub": "user-1",
+            "aud": "client-1",
+            "iss": "https://auth.example.com",
+            "iat": 1700000000,
+            "exp": 1700003600,
+            "nbf": 1700000100
+        }
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let claims = try decoder.decode(IDTokenClaims.self, from: json)
+        #expect(claims.nbf == Date(timeIntervalSince1970: 1_700_000_100))
+    }
+
+    private func makeContext() -> JWTClaimsValidator.Context {
+        JWTClaimsValidator.Context(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            nonce: nil,
+            requireVerifiedEmail: false,
+            allowedAlgorithms: [.eddsa]
+        )
+    }
+
+    private func makeIDToken(nbf: Date?) -> IDToken {
+        let claims = IDTokenClaims(
+            sub: "user-123",
+            aud: ["my-app"],
+            iss: URL(string: "https://auth.example.com")!,
+            iat: now,
+            exp: now.addingTimeInterval(3600),
+            nbf: nbf
+        )
+        return IDToken(
+            raw: "header.payload.signature",
+            header: JWTHeader(alg: .eddsa, typ: "JWT", kid: "test-kid"),
+            payload: claims,
+            signature: Data()
+        )
+    }
+}
+
+// MARK: - at_hash validation (OIDC Core §3.1.3.6)
+
+@Suite("JWTClaimsValidator at_hash")
+struct AtHashValidationTests {
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+    private let accessToken = "test-access-token-value"
+
+    @Test("RS256 / EdDSA use SHA-256 / 16 bytes")
+    func sha256HalfWidth() {
+        // For "test-access-token-value", SHA-256 first 16 bytes base64url-encoded.
+        let computed = JWTClaimsValidator.computeAtHash(
+            accessToken: accessToken,
+            algorithm: .rs256
+        )
+        // 16 bytes → 22 chars in base64url-no-pad (since 16*8/6 = 21.33 → 22)
+        #expect(computed.count == 22)
+        // Should match what EdDSA also produces (same hash family).
+        let eddsa = JWTClaimsValidator.computeAtHash(
+            accessToken: accessToken,
+            algorithm: .eddsa
+        )
+        #expect(computed == eddsa)
+    }
+
+    @Test("RS384 uses SHA-384 / 24 bytes")
+    func sha384HalfWidth() {
+        let computed = JWTClaimsValidator.computeAtHash(
+            accessToken: accessToken,
+            algorithm: .rs384
+        )
+        // 24 bytes → 32 chars base64url-no-pad
+        #expect(computed.count == 32)
+    }
+
+    @Test("RS512 uses SHA-512 / 32 bytes")
+    func sha512HalfWidth() {
+        let computed = JWTClaimsValidator.computeAtHash(
+            accessToken: accessToken,
+            algorithm: .rs512
+        )
+        // 32 bytes → 43 chars base64url-no-pad
+        #expect(computed.count == 43)
+    }
+
+    @Test("matching at_hash passes")
+    func matchingAtHash() throws {
+        let expected = JWTClaimsValidator.computeAtHash(
+            accessToken: accessToken,
+            algorithm: .eddsa
+        )
+        let idToken = makeIDToken(atHash: expected)
+        try JWTClaimsValidator.validate(
+            idToken,
+            against: makeContext(accessToken: accessToken),
+            now: now
+        )
+    }
+
+    @Test("mismatched at_hash throws .atHashMismatch")
+    func mismatchedAtHash() {
+        let idToken = makeIDToken(atHash: "wrong-hash-value")
+        do {
+            try JWTClaimsValidator.validate(
+                idToken,
+                against: makeContext(accessToken: accessToken),
+                now: now
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.atHashMismatch) {
+            // ok
+        } catch {
+            Issue.record("expected atHashMismatch, got \(error)")
+        }
+    }
+
+    @Test("absent at_hash on token skips check even when context has accessToken")
+    func absentAtHashSkips() throws {
+        let idToken = makeIDToken(atHash: nil)
+        try JWTClaimsValidator.validate(
+            idToken,
+            against: makeContext(accessToken: accessToken),
+            now: now
+        )
+    }
+
+    @Test("absent context.accessToken skips check even when token has at_hash")
+    func absentAccessTokenSkips() throws {
+        let idToken = makeIDToken(atHash: "anything")
+        try JWTClaimsValidator.validate(
+            idToken,
+            against: makeContext(accessToken: nil),
+            now: now
+        )
+    }
+
+    private func makeContext(accessToken: String?) -> JWTClaimsValidator.Context {
+        JWTClaimsValidator.Context(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            nonce: nil,
+            requireVerifiedEmail: false,
+            allowedAlgorithms: [.eddsa],
+            accessToken: accessToken
+        )
+    }
+
+    private func makeIDToken(atHash: String?) -> IDToken {
+        let claims = IDTokenClaims(
+            sub: "user-123",
+            aud: ["my-app"],
+            iss: URL(string: "https://auth.example.com")!,
+            iat: now,
+            exp: now.addingTimeInterval(3600),
+            atHash: atHash
+        )
+        return IDToken(
+            raw: "header.payload.signature",
+            header: JWTHeader(alg: .eddsa, typ: "JWT", kid: "test-kid"),
+            payload: claims,
+            signature: Data()
+        )
+    }
+}
+
+// MARK: - Discovery issuer pinning
+
+@Suite("OIDCDiscovery issuer pinning")
+struct DiscoveryIssuerPinningTests {
+    @Test("matching issuer succeeds")
+    func matchingIssuer() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            {
+                "issuer": "https://auth.example.com",
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "jwks_uri": "https://auth.example.com/jwks",
+                "response_types_supported": ["code"]
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let discovery = try await OIDCDiscovery.fetch(
+            issuer: URL(string: "https://auth.example.com")!,
+            session: session
+        )
+        #expect(discovery.issuer.absoluteString == "https://auth.example.com")
+    }
+
+    @Test("trailing slash difference is tolerated (Rauthy publishes with slash)")
+    func trailingSlashTolerated() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            // Document declares trailing slash; caller configured without.
+            let body = """
+            {
+                "issuer": "https://auth.example.com/auth/v1/",
+                "authorization_endpoint": "https://auth.example.com/auth/v1/authorize",
+                "token_endpoint": "https://auth.example.com/auth/v1/token",
+                "jwks_uri": "https://auth.example.com/auth/v1/jwks",
+                "response_types_supported": ["code"]
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        _ = try await OIDCDiscovery.fetch(
+            issuer: URL(string: "https://auth.example.com/auth/v1")!,
+            session: session
+        )
+    }
+
+    @Test("mismatched issuer throws .discoveryIssuerMismatch")
+    func mismatchedIssuer() async {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            // Document claims to be a different issuer — the attack signal.
+            let body = """
+            {
+                "issuer": "https://attacker.example.com",
+                "authorization_endpoint": "https://attacker.example.com/authorize",
+                "token_endpoint": "https://attacker.example.com/token",
+                "jwks_uri": "https://attacker.example.com/jwks",
+                "response_types_supported": ["code"]
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        do {
+            _ = try await OIDCDiscovery.fetch(
+                issuer: URL(string: "https://auth.example.com")!,
+                session: session
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.discoveryIssuerMismatch(let expected, let got) {
+            #expect(expected.absoluteString == "https://auth.example.com")
+            #expect(got.absoluteString == "https://attacker.example.com")
+        } catch {
+            Issue.record("expected discoveryIssuerMismatch, got \(error)")
+        }
+    }
+}
