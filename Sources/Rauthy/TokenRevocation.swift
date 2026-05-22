@@ -63,13 +63,7 @@ public enum TokenRevocation {
         // RFC 7009: 200 means revoked (or token was already invalid).
         // Other 2xx are unusual but treat as success. 4xx/5xx = real error.
         if http.statusCode >= 400 {
-            if let oauthError = try? JSONDecoder().decode(OAuthError.self, from: data) {
-                throw RauthyError.oauth(oauthError)
-            }
-            throw RauthyError.server(ServerError(
-                statusCode: http.statusCode,
-                message: String(data: data, encoding: .utf8)
-            ))
+            throw decodeServerErrorResponse(statusCode: http.statusCode, data: data)
         }
     }
 }

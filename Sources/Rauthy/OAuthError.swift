@@ -68,6 +68,56 @@ public struct ServerError: Error, Sendable, Equatable, LocalizedError {
     }
 }
 
+// MARK: - Internal: server error decoding pipeline
+
+/// Decode a non-2xx response body into the best-matching `RauthyError`.
+///
+/// Three-tier strategy:
+/// 1. Try RFC 6749 §5.2 OAuth error format (`{"error": "invalid_grant",
+///    "error_description": "..."}`) — used by Rauthy's `/token`, `/revoke`,
+///    and `/authorize` callbacks.
+/// 2. Try Rauthy's private envelope (`{"timestamp": ..., "error": "...",
+///    "message": "..."}`) — used by account-management endpoints and other
+///    paths where Rauthy returns a non-RFC error (e.g., "NotFound" on
+///    unknown client_id).
+/// 3. Fall back to a generic `ServerError` with the raw response string,
+///    so the caller at least sees *something* informative.
+///
+/// Used by `TokenExchange.performTokenRequest`, `TokenRevocation.revoke`,
+/// and `RauthyClient.executeAuthenticated` — three sites that previously
+/// duplicated tier 1 + tier 3 inline.
+internal func decodeServerErrorResponse(
+    statusCode: Int,
+    data: Data
+) -> RauthyError {
+    if let oauthError = try? JSONDecoder().decode(OAuthError.self, from: data) {
+        return .oauth(oauthError)
+    }
+    if let envelope = try? JSONDecoder().decode(RauthyErrorEnvelope.self, from: data),
+       envelope.error != nil || envelope.message != nil {
+        return .server(ServerError(
+            statusCode: statusCode,
+            errorCode: envelope.error,
+            message: envelope.message
+        ))
+    }
+    return .server(ServerError(
+        statusCode: statusCode,
+        message: String(data: data, encoding: .utf8)
+    ))
+}
+
+/// Rauthy's internal error envelope, observed on endpoints that return
+/// non-RFC-6749 errors (`/oidc/token` for unknown client, account paths
+/// for validation failures, etc.).
+///
+/// All fields optional — Rauthy may emit a subset.
+internal struct RauthyErrorEnvelope: Decodable {
+    let timestamp: Int?
+    let error: String?
+    let message: String?
+}
+
 // MARK: - OAuthError localized description
 
 extension OAuthError {
