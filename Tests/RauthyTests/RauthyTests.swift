@@ -3016,7 +3016,7 @@ struct ServerErrorEnvelopeTests {
 
     @Test("Rauthy private envelope is decoded as RauthyError.server with errorCode + message")
     func decodesRauthyEnvelope() {
-        // Real observed shape from production iris.misspinkelf.com.
+        // Real observed shape from a production Rauthy server.
         let data = Data(#"{"timestamp":1779477077,"error":"NotFound","message":"no rows returned"}"#.utf8)
         let err = decodeServerErrorResponse(statusCode: 404, data: data)
         if case .server(let inner) = err {
