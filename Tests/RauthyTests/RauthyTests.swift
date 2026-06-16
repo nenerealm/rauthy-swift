@@ -2642,21 +2642,22 @@ struct AtHashValidationTests {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
     private let accessToken = "test-access-token-value"
 
-    @Test("RS256 / EdDSA use SHA-256 / 16 bytes")
-    func sha256HalfWidth() {
-        // For "test-access-token-value", SHA-256 first 16 bytes base64url-encoded.
-        let computed = JWTClaimsValidator.computeAtHash(
+    @Test("RS256 uses SHA-256 / 16 bytes; EdDSA uses SHA-512 / 32 bytes")
+    func atHashDigestWidths() {
+        // RS256 → SHA-256 first 16 bytes → 22 chars base64url-no-pad (16*8/6 = 21.33 → 22).
+        let rs256 = JWTClaimsValidator.computeAtHash(
             accessToken: accessToken,
             algorithm: .rs256
         )
-        // 16 bytes → 22 chars in base64url-no-pad (since 16*8/6 = 21.33 → 22)
-        #expect(computed.count == 22)
-        // Should match what EdDSA also produces (same hash family).
+        #expect(rs256.count == 22)
+        // EdDSA → SHA-512 first 32 bytes → 43 chars (Rauthy maps "EdDSA" => Sha512).
         let eddsa = JWTClaimsValidator.computeAtHash(
             accessToken: accessToken,
             algorithm: .eddsa
         )
-        #expect(computed == eddsa)
+        #expect(eddsa.count == 43)
+        // EdDSA must NOT equal the RS256 (SHA-256) digest.
+        #expect(eddsa != rs256)
     }
 
     @Test("RS384 uses SHA-384 / 24 bytes")
