@@ -9,7 +9,7 @@ Rust 实现的开源 OIDC/OAuth2 身份服务。本 SDK 以 SwiftUI 为先,Swift
 [![Platforms](https://img.shields.io/badge/Platforms-iOS%2016+%20|%20macOS%2013+%20|%20tvOS%2016+%20|%20visionOS%201+-blue.svg)](#平台支持)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**状态:v1.0 GA。** 已对真实 Rauthy 服务器做完整端到端验证,148 个测试,
+**状态:v1.0 GA。** 已对真实 Rauthy 服务器做完整端到端验证,130 个测试,
 经过多轮对抗审查,Swift 6 并发干净。
 
 ## 平台支持
@@ -58,12 +58,8 @@ targets: [
   字段对齐配置 issuer 才接受(防止恶意/错配 IdP)
 - **Keychain 持久化**(`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`)+
   内存版本(供测试用)
-- **账户自助服务 API** —— 个人资料 / 偏好用户名 / 设备列表(查/吊销/重命名)/
-  头像(上传/删除)/ 转换为 passkey-only / 注销账户
-- **Passkey API** —— 列表、注册、删除(用
-  `ASAuthorizationPlatformPublicKeyCredentialProvider`)
 - **`Browser.openAccountDashboard`** —— 把用户跳到 Rauthy 的 web 账户面板,
-  处理 SDK 没暴露的功能
+  在那里管理个人资料 / 密码 / passkey / 设备 / 注销账户等 SDK 不暴露的功能
 - **SwiftUI 原语** —— `RauthyAuthState`、`RauthyAuthGate`、
   `.rauthyPresentationContext()`、`@RauthyUser`、`.rauthyRequiresClaim` /
   `.rauthyRequiresRole` / `.rauthyRequiresGroup`、`.rauthyErrorAlert(_:)`
@@ -74,7 +70,7 @@ targets: [
 - **`swift-log` 集成** —— 自带 `RauthyOSLogHandler` 直接对接 OSLog
 - **Swift 6 严格并发模式**(`StrictConcurrency=complete`)
 - **DocC 文档** —— 入门指南、claim 规则、SwiftUI 集成、本地化
-- **148 个测试,跨 37 个 suite** —— 单元、wire 协议、单飞 refresh、多语言
+- **130 个测试,跨 33 个 suite** —— 单元、wire 协议、单飞 refresh、多语言
   切换、签名校验
 
 ## v1.0 故意不含的东西
@@ -84,6 +80,10 @@ targets: [
 - **多账户** —— 推迟到 v1.5。单账户已经覆盖了绝大多数场景
 - **Passkey 作为登录方式** —— Rauthy 的 web 登录页已经通过 OAuth code flow
   redirect 处理了 passkey 认证,SDK 不需要并行再实现一遍
+- **原生账户自助服务 / Passkey 管理 API** —— Rauthy 的 `PrincipalMiddleware`
+  对 `/users/{id}/self*` 只接受 session cookie 或 API-key,拒绝原生 OIDC
+  Bearer,所以 SDK 不封装个人资料 / 偏好用户名 / 设备 / 头像 / passkey / 注销
+  账户的增删改;改用 `Browser.openAccountDashboard` 跳转 Rauthy 的 web 账户面板
 - **`/users/request_reset`**(忘记密码)—— 需要服务端 PoW solver,这属于
   Rauthy web UI 的范畴,不应该出现在面向已登录用户的 SDK 里
 - **邮件确认端点** —— 用户点邮件里的链接,服务端处理一切,不需要 SDK 调用
@@ -166,8 +166,8 @@ struct MainView: View {
 
 ## 试试 sample app
 
-`Samples/NotesApp/` 下有一个完整的 SwiftUI iOS app,演示了登录、用户信息、
-账户管理、passkey 注册等全部功能。
+`Samples/NotesApp/` 下有一个 SwiftUI iOS app(三个 tab),演示了登录、用户信息、
+claim 门控、跳转 Rauthy 的 web 账户面板、以及四种 `signOut` 模式。
 
 ```bash
 cd Samples/NotesApp
@@ -215,7 +215,7 @@ PR 加新翻译 —— 看 `Sources/Rauthy/Resources/<lang>.lproj/Localizable.st
 
 | 里程碑 | 状态 | 重点 |
 |--------|------|------|
-| v1.0 | ✅ 已发 | PKCE + 账户 API + Passkey + SwiftUI 原语 + i18n |
+| v1.0 | ✅ 已发 | PKCE + Token 刷新/吊销 + ID token 校验 + SwiftUI 原语 + i18n |
 | v1.1 | 计划中 | DPoP token binding(RFC 9449)—— 等 Rauthy 上游 ES256 |
 | v1.5 | 计划中 | 多账户支持 |
 | v2.0 | 远期 | Secure Enclave 私钥存储;重新评估 XCFramework 发布 |

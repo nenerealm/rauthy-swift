@@ -2,28 +2,21 @@ import SwiftUI
 import Rauthy
 
 /// Settings tab — locale switching, claim-rule demo, browser flows, sign-out
-/// modes, account deletion. Demonstrates:
+/// modes. Demonstrates:
 ///
 ///   - `Rauthy.locale` runtime switching
 ///   - `.rauthyRequiresRole / Group / Claim` view modifiers
 ///   - `@RauthyUser` property wrapper (via `@EnvironmentObject` in this sample)
-///   - `client.web.openAccountDashboard()`
+///   - `client.web.openAccountDashboard()` — account management (profile,
+///     password, passkeys, devices, deletion) lives in Rauthy's web dashboard
 ///   - `signOut(scope:)` with all four scopes
-///   - `AccountAPI.requestAccountDeletion()` + `confirmAccountDeletion()`
 struct SettingsTabView: View {
     @EnvironmentObject var auth: RauthyAuthState
     let user: User
 
-    @State private var deletionStep: DeletionStep = .idle
-    @State private var deletionConfirm = false
     @State private var signOutScope: SignOutMode = .revokeTokens
     @State private var signOutConfirm = false
     @State private var errorMessage: String?
-
-    enum DeletionStep {
-        case idle
-        case requested
-    }
 
     enum SignOutMode: String, CaseIterable, Identifiable {
         case local
@@ -62,7 +55,6 @@ struct SettingsTabView: View {
                 claimDemoSection
                 browserSection
                 signOutSection
-                dangerSection
 
                 if let err = errorMessage {
                     Section {
@@ -82,27 +74,6 @@ struct SettingsTabView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(signOutScope.description)
-            }
-            .confirmationDialog(
-                deletionStep == .idle
-                    ? "Request account deletion?"
-                    : "Confirm account deletion?",
-                isPresented: $deletionConfirm,
-                titleVisibility: .visible
-            ) {
-                Button(
-                    deletionStep == .idle ? "Request" : "Delete forever",
-                    role: .destructive
-                ) {
-                    Task { await deletionStep == .idle ? requestDeletion() : confirmDeletion() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(
-                    deletionStep == .idle
-                        ? "Step 1/2: ask Rauthy to start the deletion flow. Most Rauthy deployments will email you a confirmation link."
-                        : "Step 2/2: actually delete the account. This wipes the user, sessions, and tokens. No undo."
-                )
             }
         }
     }
@@ -178,7 +149,7 @@ struct SettingsTabView: View {
         } header: {
             Text("Web flows")
         } footer: {
-            Text("Opens Rauthy's hosted UI in Safari (keeps your existing rauthy session).")
+            Text("Opens Rauthy's hosted UI in Safari (keeps your existing rauthy session). Profile, password, passkeys, devices, and account deletion are all managed here.")
         }
     }
 
@@ -204,38 +175,6 @@ struct SettingsTabView: View {
             .disabled(auth.isBusy)
         } header: {
             Text("Sign out")
-        }
-    }
-
-    // MARK: - Danger zone
-
-    private var dangerSection: some View {
-        Section {
-            switch deletionStep {
-            case .idle:
-                Button(role: .destructive) {
-                    deletionConfirm = true
-                } label: {
-                    Label("Delete my account…", systemImage: "trash")
-                }
-            case .requested:
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Deletion requested. Check your email for the confirmation link.")
-                        .font(.subheadline)
-                    Button(role: .destructive) {
-                        deletionConfirm = true
-                    } label: {
-                        Label("Confirm deletion (bypass email)", systemImage: "exclamationmark.triangle")
-                    }
-                    .font(.subheadline)
-                }
-            }
-        } header: {
-            Text("Danger zone")
-        } footer: {
-            Text(
-                "Two-step deletion: request, then confirm. Real Rauthy deployments require the email link to click. This sample exposes the second call directly so you can drive the full flow from one device."
-            )
         }
     }
 
@@ -265,26 +204,6 @@ struct SettingsTabView: View {
 
     private func openSubPath(_ path: String) async {
         await auth.client.web.openAccountURL(path: path)
-    }
-
-    private func requestDeletion() async {
-        do {
-            try await auth.client.account.requestAccountDeletion()
-            deletionStep = .requested
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func confirmDeletion() async {
-        do {
-            try await auth.client.account.confirmAccountDeletion()
-            // confirmAccountDeletion clears storage on success; force the
-            // SwiftUI view tree to re-evaluate.
-            await auth.signOut(scope: .local)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
 }
 

@@ -41,14 +41,10 @@ public final class RauthyAuthState: ObservableObject {
         self.client = client
     }
 
-    /// The current presentation anchor captured by `.rauthyPresentationContext()`.
-    /// Pass this to SDK calls that require an anchor outside the built-in
-    /// sign-in flow — e.g. `PasskeyAPI.register(named:anchor:)`:
-    ///
-    /// ```swift
-    /// guard let anchor = auth.presentationAnchor else { return }
-    /// try await auth.client.passkeys.register(named: name, anchor: anchor)
-    /// ```
+    /// The current presentation anchor captured by `.rauthyPresentationContext()`
+    /// — the window the SDK presents its `ASWebAuthenticationSession` from during
+    /// the built-in sign-in and web sign-out flows. Exposed for advanced cases
+    /// that need to know which window the SDK will present from.
     ///
     /// `nil` until a SwiftUI view modified with `.rauthyPresentationContext()`
     /// has been attached to a window.

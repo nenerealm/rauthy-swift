@@ -53,6 +53,23 @@ public actor RauthyClient {
         cachedJWKS = nil
     }
 
+    /// Build the public URL for downloading a user's avatar. Synchronous —
+    /// doesn't need an access token because picture downloads are public.
+    /// Use with `AsyncImage` or `URLSession`. Account/avatar *management*
+    /// lives in Rauthy's web dashboard (see `Browser.openAccountDashboard`).
+    public nonisolated func pictureURL(userID: String, pictureID: String) -> URL {
+        let baseString = config.issuer.absoluteString
+        let trimmedBase = baseString.hasSuffix("/")
+            ? String(baseString.dropLast())
+            : baseString
+        let safeUser = userID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? userID
+        let safePicture = pictureID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? pictureID
+        // swift-format-ignore: NeverForceUnwrap
+        return URL(string: "\(trimmedBase)/users/\(safeUser)/picture/\(safePicture)")!
+    }
+
     /// Derive a URLSession from `config.localDev`. With no localDev settings,
     /// returns `URLSession.shared`. With `trustedSelfSignedCAs` populated,
     /// returns a session whose delegate evaluates server trust against those

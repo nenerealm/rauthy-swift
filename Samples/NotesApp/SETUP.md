@@ -1,18 +1,17 @@
 # NotesApp Sample — Setup
 
-A comprehensive iOS SwiftUI app that exercises **every public API** in the
-Rauthy Swift SDK. Use it to test against your Rauthy server, to learn what
-each API does in context, or as a starting point for your own integration.
+A comprehensive iOS SwiftUI app that exercises the Rauthy Swift SDK's public
+API. Use it to test against your Rauthy server, to learn what each API does in
+context, or as a starting point for your own integration.
 
 ## What the app demonstrates
 
-Four tabs, each focused on a different surface:
+Three tabs, each focused on a different surface:
 
 | Tab | SDK APIs exercised |
 |---|---|
-| **Profile** | `User` snapshot · `AccountAPI.updateProfile` · `updatePreferredUsername` · `uploadAvatar` · `deleteAvatar` · `pictureURL` · `RauthyAuthState.refreshUser` |
-| **Security** | `PasskeyAPI.list` / `register` / `delete` · `AccountAPI.devices` · `revokeDevice` · `renameDevice` · password change · `convertToPasskeyOnly` |
-| **Settings** | `Rauthy.locale` runtime switching · `.rauthyRequiresRole/Group/Claim` view modifiers · `WebFlows.openAccountDashboard` · all four `signOut(scope:)` modes · `requestAccountDeletion` + `confirmAccountDeletion` |
+| **Profile** | `User` snapshot · `RauthyClient.pictureURL` for avatar display · `WebFlows.openAccountDashboard` handoff for editing · `RauthyAuthState.refreshUser` |
+| **Settings** | `Rauthy.locale` runtime switching · `.rauthyRequiresRole/Group/Claim` view modifiers · `WebFlows.openAccountDashboard` / `openAccountURL` · all four `signOut(scope:)` modes |
 | **Debug** | `@RauthyUser` property wrapper · raw user JSON · `Rauthy.locale` state · `RauthyOSLogHandler` pointer · token refresh · interactive `ClaimRule` sandbox |
 
 Plus on the login screen: pre-login language preview showing how
@@ -87,30 +86,20 @@ xcodebuild -project NotesApp.xcodeproj -scheme NotesApp \
 ```
 
 You'll see the login screen → tap "Sign in with Rauthy" →
-`ASWebAuthenticationSession` opens → log in on Rauthy → return to the four-tab
+`ASWebAuthenticationSession` opens → log in on Rauthy → return to the three-tab
 main view.
 
 ## Per-tab notes
 
 ### Profile tab
 
-- **Avatar upload** uses `PhotosPicker` (iOS 16+). Pick any image — JPEG / PNG / GIF /
-  WebP are detected from magic bytes. Rauthy auto-resizes server-side.
-- **Edit profile** triggers an email verification flow when you change email —
-  the new address isn't active until you click the Rauthy verification link.
-- **Change username** is subject to Rauthy's username regex (alphanumeric +
-  limited punctuation, 1–32 chars).
-
-### Security tab
-
-- **Passkey registration** uses `ASAuthorizationPlatformPublicKeyCredentialProvider`
-  → real Face ID / Touch ID on device. **Simulator can't enroll biometric
-  credentials** — must run on a physical device to test.
-- **Device rename** is subject to Rauthy's name regex (2–128 chars).
-- **Convert to passkey-only** is one-way: once converted, password sign-in
-  stops working. The button is gated on having at least one passkey.
-- **Password change** requires the current password and (if MFA is enabled)
-  an MFA code. Tokens stay valid after the change.
+- **Read-only** display of the `User` snapshot: avatar (`RauthyClient.pictureURL`),
+  username, name, email-verified, roles, and groups.
+- **Manage profile in browser** opens Rauthy's hosted web account dashboard
+  (`WebFlows.openAccountDashboard`). Profile, username, avatar, passwords,
+  passkeys, and devices are all edited there — Rauthy's self-service endpoints
+  require a session cookie / API-key, which a native OIDC Bearer token isn't,
+  so the SDK hands off to the web UI instead of wrapping those mutations.
 
 ### Settings tab
 
@@ -120,13 +109,13 @@ main view.
 - **`.rauthyRequiresRole` / `Group` / `Claim`** rows: the view below each row
   is visible only if the user matches that rule. Useful for testing
   role-gated UI.
+- **Web flows:** "Open account dashboard" and "Open /account/devices" launch
+  Rauthy's hosted UI in Safari (reusing your existing Rauthy session) for
+  profile, password, passkey, device, and account-deletion management.
 - **Sign-out modes:** `local` (Keychain only) → `revokeTokens` (RFC 7009) →
   `rpInitiated` (browser end-session) → `full` (both). The `rpInitiated` /
   `full` modes require `notesapp://logged-out` to be registered as a
   post-logout redirect URI in Rauthy.
-- **Delete account** is two-step: request, then confirm. Most Rauthy
-  deployments require the user to click an emailed link between the two
-  steps. This sample exposes the second call directly for testing.
 
 ### Debug tab
 
@@ -167,10 +156,6 @@ main view.
   through Rauthy's account UI, OR edit `NotesAppApp.swift` and set
   `requireVerifiedEmail: false` in the `RauthyConfig.production()` call.
 
-**Passkey registration fails with "no presentation context"**
-- `.rauthyPresentationContext()` modifier isn't reaching the window.
-  Should be applied at the WindowGroup root in `NotesAppApp.swift`.
-
 **RP-Initiated logout opens a sheet that errors immediately**
 - `notesapp://logged-out` isn't in Rauthy's allowed post-logout redirect URIs.
 
@@ -195,3 +180,5 @@ These are intentionally cut from v1.0 — see the main
 - Multi-account support (v1.5)
 - Passkey-as-sign-in flow (handled by Rauthy's web login, not the SDK)
 - Forgot-password flow (requires server PoW, lives in Rauthy's web UI)
+- Native account / passkey management APIs (removed — Rauthy rejects OIDC
+  Bearer on `/users/{id}/self*`; use `WebFlows.openAccountDashboard` instead)
