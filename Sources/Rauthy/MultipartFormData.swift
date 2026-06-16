@@ -25,6 +25,15 @@ internal enum MultipartFormData {
         mimeType: String,
         data: Data
     ) -> Data {
+        // Reject header-injection characters. The avatar caller passes fixed
+        // field/file names and a known MIME type, so this is a defensive
+        // assert rather than a routine code path.
+        for value in [fieldName, filename, mimeType] {
+            precondition(
+                !value.contains(where: { $0 == "\r" || $0 == "\n" || $0 == "\"" }),
+                "multipart header value must not contain CR, LF, or double-quote"
+            )
+        }
         var body = Data()
         let crlf = "\r\n"
         body.append(Data("--\(boundary)\(crlf)".utf8))

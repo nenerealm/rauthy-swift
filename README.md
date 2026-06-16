@@ -68,7 +68,7 @@ targets: [
   `.rauthyPresentationContext()`、`@RauthyUser`、`.rauthyRequiresClaim` /
   `.rauthyRequiresRole` / `.rauthyRequiresGroup`、`.rauthyErrorAlert(_:)`
 - **`ClaimRule`** —— 声明式授权规则(`.role`、`.group`,组合子 `.and` /
-  `.or` / `.not`)
+  `.or`)
 - **本地化错误消息** —— 英语 / 简体中文 / 日语,运行时可通过 `Rauthy.locale`
   切换。格式化字符串安全(翻译者打错 `%@` 占位符不会让错误路径崩溃)
 - **`swift-log` 集成** —— 自带 `RauthyOSLogHandler` 直接对接 OSLog
@@ -99,13 +99,16 @@ import SwiftUI
 
 @main
 struct MyApp: App {
-    let rauthy = RauthyClient(config: .production(
-        issuer: URL(string: "https://your-rauthy.example.com/auth/v1")!,
-        clientID: "my-app",
-        redirectURI: URL(string: "myapp://callback")!,
-        userClaim: .or([.group("users")]),
-        adminClaim: .or([.role("admin")])
-    ))
+    let rauthy = RauthyClient(
+        config: .production(
+            issuer: URL(string: "https://your-rauthy.example.com/auth/v1")!,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://callback")!,
+            userClaim: .or([.group("users")]),
+            adminClaim: .or([.role("admin")])
+        ),
+        storage: .keychain()
+    )
 
     @StateObject var auth: RauthyAuthState
 

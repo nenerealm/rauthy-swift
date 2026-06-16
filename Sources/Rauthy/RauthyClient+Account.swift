@@ -178,6 +178,14 @@ extension RauthyClient {
     // MARK: - Avatar
 
     internal func performUploadAvatar(imageData: Data, mimeType: String) async throws -> String {
+        // Client-side guard before uploading (mirrors Rauthy's server limits).
+        let allowedTypes = ["image/jpeg", "image/png", "image/webp"]
+        guard allowedTypes.contains(mimeType.lowercased()) else {
+            throw RauthyError.unexpected(AvatarUploadError.unsupportedType(mimeType))
+        }
+        guard imageData.count <= 5 * 1024 * 1024 else {
+            throw RauthyError.unexpected(AvatarUploadError.tooLarge(bytes: imageData.count))
+        }
         let boundary = "RauthySwiftBoundary_\(UUID().uuidString)"
         let body = MultipartFormData.build(
             boundary: boundary,
@@ -252,9 +260,14 @@ extension RauthyClient {
             try await storage.clear()
         } catch {
             config.logger.warning(
-                "Account deletion succeeded server-side but local storage clear failed",
-                metadata: ["error": "\(error)"]
+                "Account deletion succeeded server-side but local storage clear failed"
             )
         }
     }
+}
+
+/// Client-side avatar validation failures (see `performUploadAvatar`).
+private enum AvatarUploadError: Error, Sendable {
+    case unsupportedType(String)
+    case tooLarge(bytes: Int)
 }

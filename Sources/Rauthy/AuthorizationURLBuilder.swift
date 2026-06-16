@@ -34,7 +34,9 @@ public enum AuthorizationURLBuilder {
     /// Generate a cryptographically random state or nonce string.
     public static func randomToken(byteCount: Int = 16) -> String {
         var bytes = [UInt8](repeating: 0, count: byteCount)
-        _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes) == errSecSuccess else {
+            preconditionFailure("SecRandomCopyBytes failed — refusing to generate a predictable state/nonce")
+        }
         return Data(bytes).base64URLEncodedString()
     }
 

@@ -20,6 +20,11 @@ public extension View {
     /// hooks `didMoveToWindow` (UIKit) or `viewDidMoveToWindow` (AppKit)
     /// to publish the host window into the SDK's internal holder. Calling
     /// `auth.signIn()` then "just works."
+    ///
+    /// - Note: The host window is stored in a process-global holder
+    ///   (last-attached-window-wins). Correct for single-window apps;
+    ///   multi-window / multi-scene apps (iPadOS, macOS) should anchor per
+    ///   scene — a per-scene API is planned.
     func rauthyPresentationContext() -> some View {
         background(RauthyWindowProbe().frame(width: 0, height: 0))
     }

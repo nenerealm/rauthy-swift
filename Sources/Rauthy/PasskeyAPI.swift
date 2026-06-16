@@ -8,6 +8,11 @@ import AuthenticationServices
 /// Access via `client.passkeys`. Registration uses iOS's
 /// `ASAuthorizationPlatformPublicKeyCredentialProvider` and presents the
 /// Face ID / Touch ID sheet — requires an `ASPresentationAnchor` (UIWindow).
+///
+/// - Note: These operations target normal authenticated accounts. Accounts
+///   gated by an extra MFA step require Rauthy's `mfa_mod_token_id`, which
+///   this version does not yet supply — register/delete on such accounts will
+///   be rejected server-side (v1.1 TODO).
 public struct PasskeyAPI: Sendable {
     let client: RauthyClient
 
@@ -324,9 +329,10 @@ extension RauthyClient {
     internal func performDeletePasskey(name: String) async throws {
         // Empty body (mfa_mod_token_id is null for normal authenticated users).
         let body = Data("{}".utf8)
+        let escaped = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
         let request = try await authenticatedRequest(
             method: "DELETE",
-            relativePath: "users/{id}/webauthn/delete/\(name)",
+            relativePath: "users/{id}/webauthn/delete/\(escaped)",
             body: body
         )
         _ = try await executeAuthenticated(request)

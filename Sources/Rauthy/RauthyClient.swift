@@ -60,9 +60,15 @@ public actor RauthyClient {
     /// session to `init`.
     private static func defaultURLSession(for config: RauthyConfig) -> URLSession {
         if let localDev = config.localDev {
-            return LocalDevURLSession.make(settings: localDev)
+            return LocalDevURLSession.make(settings: localDev, issuerHost: config.issuer.host)
         }
-        return .shared
+        // Don't use URLSession.shared: its on-disk URLCache could persist
+        // /userinfo (and other) responses that carry identity data. Use a
+        // dedicated, non-caching session instead.
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
     }
 
     /// Refuse to construct a client against a plain-HTTP issuer unless
@@ -166,6 +172,26 @@ public actor RauthyClient {
             prefersEphemeralWebBrowserSession: prefersEphemeralWebBrowserSession
         )
 
+        return try await completeSignIn(
+            callbackURL: callbackURL,
+            state: state,
+            nonce: nonce,
+            pkce: pkce,
+            discovery: discovery
+        )
+    }
+
+    /// Finish sign-in after the web-auth callback returns. Split out from
+    /// `signIn` so the security-critical tail — state (CSRF) check, token
+    /// exchange, ID-token validation, userClaim gate, and persistence — is
+    /// unit-testable without driving `ASWebAuthenticationSession`.
+    internal func completeSignIn(
+        callbackURL: URL,
+        state: String,
+        nonce: String,
+        pkce: PKCE,
+        discovery: OpenIDConfiguration
+    ) async throws -> Token {
         let (code, returnedState) = try AuthorizationURLBuilder.parseCallback(callbackURL)
         if returnedState != state {
             config.logger.warning("State mismatch — possible CSRF attempt")
@@ -187,6 +213,16 @@ public actor RauthyClient {
                 nonce: nonce,
                 discovery: discovery
             )
+            // Enforce the configured user gate. The server remains the real
+            // authorization boundary; this is a client-side admission check
+            // matching the documented `userClaim` contract. `.any` admits all.
+            guard config.userClaim.matches(
+                roles: idToken.payload.roles,
+                groups: idToken.payload.groups
+            ) else {
+                config.logger.info("Sign-in rejected: user does not satisfy userClaim")
+                throw RauthyError.notAuthorized
+            }
         } else if config.scopes.contains("openid") {
             // openid scope was requested but no ID token came back — surprising.
             config.logger.warning("openid scope requested but no id_token returned")
@@ -194,11 +230,8 @@ public actor RauthyClient {
 
         try await storage.save(token)
 
-        // Sub is a stable user identifier; log at info without it (the fact
-        // that sign-in succeeded is the part most monitoring cares about),
-        // include sub only at debug for diagnostic spelunking. OSLogHandler
-        // marks metadata `.public`, so info-level identifiers would be
-        // visible in Console.app on shipped builds.
+        // Sub is a stable user identifier; log at info without it, include
+        // sub only at debug for diagnostic spelunking.
         config.logger.info("Sign-in succeeded")
         config.logger.debug("Sign-in token issued", metadata: [
             "sub": "\(token.idToken?.payload.sub ?? "unknown")",
@@ -274,9 +307,10 @@ public actor RauthyClient {
                     )
                     revokeSucceeded = true
                 } catch {
+                    // Don't log the raw error — it may embed a server response
+                    // body. That revoke failed is the actionable part.
                     config.logger.warning(
-                        "Token revocation failed during .full sign-out; continuing with RP-Initiated",
-                        metadata: ["error": "\(error)"]
+                        "Token revocation failed during .full sign-out; continuing with RP-Initiated"
                     )
                 }
             }
@@ -417,6 +451,21 @@ public actor RauthyClient {
                     discovery: discovery,
                     session: urlSession
                 )
+                // Re-validate the refreshed id_token (OIDC Core §3.1.3.7):
+                // signature + claims, just like sign-in. No nonce is expected
+                // on a refresh-issued id_token, so pass nil.
+                if let idToken = new.idToken {
+                    try await self.validateIDToken(
+                        idToken,
+                        accessToken: new.accessToken,
+                        nonce: nil,
+                        // Email verification is a sign-in admission gate, not
+                        // something to re-litigate on every silent refresh;
+                        // some IdPs omit email_verified on refresh id_tokens.
+                        requireVerifiedEmail: false,
+                        discovery: discovery
+                    )
+                }
                 try await storage.save(new)
                 config.logger.debug("Token refreshed", metadata: ["expires_in": "\(new.expiresIn)"])
                 return new
@@ -460,22 +509,46 @@ public actor RauthyClient {
         return set
     }
 
-    private func validateIDToken(
+    internal func validateIDToken(
         _ idToken: IDToken,
         accessToken: String,
-        nonce: String,
+        nonce: String?,
+        requireVerifiedEmail: Bool? = nil,
         discovery: OpenIDConfiguration
     ) async throws {
-        // 1. Find a matching key. If kid miss, refetch JWKS once.
-        var keySet = try await jwks()
+        // 0. Enforce the algorithm allowlist BEFORE any cryptography, so a
+        // disallowed alg never reaches the signature verifier.
+        guard config.allowedAlgorithms.contains(idToken.header.alg) else {
+            throw RauthyError.invalidJWT(.wrongAlgorithm(
+                allowed: Array(config.allowedAlgorithms),
+                got: idToken.header.alg.rawValue
+            ))
+        }
+
+        // 1. Find a matching key: kid match, signing use, and a key type that
+        // matches the declared algorithm family. If kid miss, refetch JWKS once.
         let kid = idToken.header.kid ?? ""
-        var matchingKey = keySet.key(for: kid)
+        func select(_ set: JWKSet) -> JWK? {
+            set.keys.first { jwk in
+                guard jwk.kid == kid else { return false }
+                if let use = jwk.use, use != "sig" { return false }
+                switch idToken.header.alg {
+                case .rs256, .rs384, .rs512:
+                    return jwk.kty == "RSA"
+                case .eddsa:
+                    return jwk.kty == "OKP" && jwk.crv == "Ed25519"
+                }
+            }
+        }
+
+        var keySet = try await jwks()
+        var matchingKey = select(keySet)
 
         if matchingKey == nil {
             config.logger.debug("Key id miss — refetching JWKS", metadata: ["kid": "\(kid)"])
             cachedJWKS = nil
             keySet = try await jwks()
-            matchingKey = keySet.key(for: kid)
+            matchingKey = select(keySet)
         }
 
         guard let key = matchingKey else {
@@ -494,13 +567,12 @@ public actor RauthyClient {
         // user-configured value (the root of authority), not the discovery
         // document's issuer field. Discovery already verifies those match
         // (`RauthyError.discoveryIssuerMismatch`), so this is defense in
-        // depth — if the discovery cache is somehow stale or compromised,
-        // the token-side check still anchors against config.
+        // depth. `nonce: nil` (used on the refresh path) skips the nonce check.
         let context = JWTClaimsValidator.Context(
             issuer: config.issuer,
             clientID: config.clientID,
             nonce: nonce,
-            requireVerifiedEmail: config.requireVerifiedEmail,
+            requireVerifiedEmail: requireVerifiedEmail ?? config.requireVerifiedEmail,
             allowedAlgorithms: config.allowedAlgorithms,
             accessToken: accessToken
         )

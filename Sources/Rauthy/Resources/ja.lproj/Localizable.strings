@@ -8,6 +8,7 @@
 "error.userCancelled"              = "サインインがキャンセルされました。";
 "error.userInteractionRequired"    = "追加のサインイン手順が必要です。もう一度サインインしてください。";
 "error.stateMismatch"              = "サインインのセキュリティチェックに失敗しました。もう一度お試しください。";
+"error.notAuthorized"              = "このアプリを使用する権限がありません。管理者にお問い合わせください。";
 "error.networkUnavailable"         = "ネットワークに接続できません。接続を確認してもう一度お試しください。";
 "error.sessionNotFound"            = "有効なセッションが見つかりません。";
 "error.tokenExpired"               = "セッションの有効期限が切れました。";

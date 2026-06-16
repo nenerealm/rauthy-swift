@@ -30,11 +30,19 @@ public struct RauthyConfig: Sendable {
     public let allowedAlgorithms: Set<SigningAlgorithm>
 
     /// Required: rule that gates whether an authenticated user may use this
-    /// app at all. Pass `.any` to admit any Rauthy user.
+    /// app at all. **Enforced at sign-in** — a user who does not satisfy this
+    /// rule is rejected with `RauthyError.notAuthorized`. Pass `.any` to admit
+    /// any Rauthy user.
+    ///
+    /// Note: `.group(...)` / `.role(...)` rules are evaluated against the ID
+    /// token's `groups` / `roles` claims, which are only present when the
+    /// matching scope was requested. Request the `groups` scope (and ensure
+    /// Rauthy emits `roles`) when gating on them — otherwise use `.any`.
     public let userClaim: ClaimRule
 
-    /// Required: rule that determines whether the user is an admin.
-    /// Pass `.none` if the app has no admin concept.
+    /// Required: rule that determines whether the user is an admin. Used by
+    /// your own checks and the SwiftUI claim gates. Pass `.none` if the app
+    /// has no admin concept.
     public let adminClaim: ClaimRule
 
     /// Optional local-dev settings. Set to `nil` for production builds.
@@ -74,6 +82,7 @@ public struct RauthyConfig: Sendable {
         clientID: String,
         redirectURI: URL,
         scopes: [String] = ["openid", "profile", "email"],
+        allowedAlgorithms: Set<SigningAlgorithm> = Set(SigningAlgorithm.allCases),
         userClaim: ClaimRule,
         adminClaim: ClaimRule,
         logger: Logger = Logger(label: "rauthy.swift")
@@ -83,6 +92,7 @@ public struct RauthyConfig: Sendable {
             clientID: clientID,
             redirectURI: redirectURI,
             scopes: scopes,
+            allowedAlgorithms: allowedAlgorithms,
             userClaim: userClaim,
             adminClaim: adminClaim,
             logger: logger

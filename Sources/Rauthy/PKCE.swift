@@ -24,7 +24,9 @@ public struct PKCE: Sendable, Equatable {
     /// randomness (resulting in a 43-character verifier).
     public init() {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            preconditionFailure("SecRandomCopyBytes failed — refusing to generate a predictable PKCE verifier")
+        }
         let verifierData = Data(bytes)
         let verifier = verifierData.base64URLEncodedString()
 

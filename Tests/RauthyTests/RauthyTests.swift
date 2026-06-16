@@ -2162,8 +2162,6 @@ struct AutoRefreshTests {
     }
 }
 
-}  // end of WireTests parent suite
-
 // MARK: - RauthyConfig
 
 @Suite("RauthyConfig")
@@ -2998,6 +2996,8 @@ struct DiscoveryCacheTests {
     }
 }
 
+}  // end of WireTests parent suite
+
 // MARK: - Rauthy server error envelope decoding (M4)
 
 @Suite("Server error envelope decoding")
@@ -3054,3 +3054,729 @@ struct ServerErrorEnvelopeTests {
         }
     }
 }
+
+// MARK: ===================================================================
+// MARK: Security-fix regression tests
+// MARK: ===================================================================
+//
+// One suite per finding ID from SECURITY-REVIEW.md / REMEDIATION.md. Pure-
+// logic suites (no shared global state) are top-level; suites that drive the
+// process-global `MockURLProtocol.handler` live in the `SecurityWireTests`
+// parent below, marked `.serialized`, exactly like the existing `WireTests`.
+
+// MARK: - SEC-L05: ClaimRule empty-collection semantics (fail-closed)
+
+@Suite("SEC-L05 ClaimRule edge cases")
+struct SecL05ClaimRuleEdgeCasesTests {
+    @Test("empty .and fails closed")
+    func emptyAndIsFalse() {
+        // An empty `allSatisfy` is vacuously true; the SDK must override that
+        // so `.and([])` denies rather than admitting everyone. Use `.any` to
+        // admit everyone deliberately.
+        #expect(ClaimRule.and([]).matches(roles: [], groups: []) == false)
+        #expect(ClaimRule.and([]).matches(roles: ["admin"], groups: ["ops"]) == false)
+    }
+
+    @Test("empty .or is false")
+    func emptyOrIsFalse() {
+        #expect(ClaimRule.or([]).matches(roles: [], groups: []) == false)
+        #expect(ClaimRule.or([]).matches(roles: ["admin"], groups: ["ops"]) == false)
+    }
+
+    @Test(".any always matches")
+    func anyIsTrue() {
+        #expect(ClaimRule.any.matches(roles: [], groups: []) == true)
+    }
+
+    @Test(".none never matches")
+    func noneIsFalse() {
+        #expect(ClaimRule.none.matches(roles: [], groups: []) == false)
+    }
+}
+
+// MARK: - SEC-L23: azp (authorized party) validation (OIDC Core §3.1.3.7)
+
+@Suite("SEC-L23 JWTClaimsValidator azp")
+struct SecL23AzpValidationTests {
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    @Test("rejects azp != clientID with .wrongAzp")
+    func rejectsWrongAzp() {
+        let idToken = makeIDToken(aud: ["my-app"], azp: "someone-else")
+        do {
+            try JWTClaimsValidator.validate(idToken, against: makeContext(), now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.wrongAzp(let expected, let got)) {
+            #expect(expected == "my-app")
+            #expect(got == "someone-else")
+        } catch {
+            Issue.record("expected wrongAzp, got \(error)")
+        }
+    }
+
+    @Test("accepts azp == clientID")
+    func acceptsMatchingAzp() throws {
+        let idToken = makeIDToken(aud: ["my-app"], azp: "my-app")
+        try JWTClaimsValidator.validate(idToken, against: makeContext(), now: now)
+    }
+
+    @Test("accepts absent azp with a single audience")
+    func acceptsAbsentAzpSingleAud() throws {
+        let idToken = makeIDToken(aud: ["my-app"], azp: nil)
+        try JWTClaimsValidator.validate(idToken, against: makeContext(), now: now)
+    }
+
+    @Test("rejects multiple aud when azp is nil")
+    func rejectsMultipleAudWithoutAzp() {
+        // OIDC Core §3.1.3.7 rule 4: with >1 audience, azp MUST be present.
+        let idToken = makeIDToken(aud: ["my-app", "other-app"], azp: nil)
+        do {
+            try JWTClaimsValidator.validate(idToken, against: makeContext(), now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.wrongAzp(let expected, _)) {
+            #expect(expected == "my-app")
+        } catch {
+            Issue.record("expected wrongAzp, got \(error)")
+        }
+    }
+
+    private func makeContext() -> JWTClaimsValidator.Context {
+        JWTClaimsValidator.Context(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            nonce: nil,
+            requireVerifiedEmail: false,
+            allowedAlgorithms: [.eddsa]
+        )
+    }
+
+    private func makeIDToken(aud: [String], azp: String?) -> IDToken {
+        let claims = IDTokenClaims(
+            sub: "user-123",
+            aud: aud,
+            azp: azp,
+            iss: URL(string: "https://auth.example.com")!,
+            iat: now,
+            exp: now.addingTimeInterval(3600)
+        )
+        return IDToken(
+            raw: "header.payload.signature",
+            header: JWTHeader(alg: .eddsa, typ: "JWT", kid: "test-kid"),
+            payload: claims,
+            signature: Data()
+        )
+    }
+}
+
+// MARK: - SEC-I01: reject id_token minted in the future (iat > leeway)
+
+@Suite("SEC-I01 JWTClaimsValidator future iat")
+struct SecI01FutureIatValidationTests {
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+    @Test("iat far in the future beyond leeway throws .notYetValid")
+    func futureIatRejected() {
+        // iat one hour ahead, default leeway 60s → not yet valid.
+        let idToken = makeIDToken(iat: now.addingTimeInterval(3600))
+        do {
+            try JWTClaimsValidator.validate(idToken, against: makeContext(), now: now)
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.notYetValid) {
+            // ok
+        } catch {
+            Issue.record("expected notYetValid, got \(error)")
+        }
+    }
+
+    @Test("iat within leeway passes")
+    func iatWithinLeewayPasses() throws {
+        let idToken = makeIDToken(iat: now.addingTimeInterval(30))  // 30s ahead
+        try JWTClaimsValidator.validate(idToken, against: makeContext(), now: now)
+    }
+
+    private func makeContext() -> JWTClaimsValidator.Context {
+        JWTClaimsValidator.Context(
+            issuer: URL(string: "https://auth.example.com")!,
+            clientID: "my-app",
+            nonce: nil,
+            requireVerifiedEmail: false,
+            allowedAlgorithms: [.eddsa]
+        )
+    }
+
+    private func makeIDToken(iat: Date) -> IDToken {
+        let claims = IDTokenClaims(
+            sub: "user-123",
+            aud: ["my-app"],
+            iss: URL(string: "https://auth.example.com")!,
+            iat: iat,
+            // Keep exp comfortably ahead of `iat` so the future-iat check is
+            // what trips, not expiry.
+            exp: iat.addingTimeInterval(3600)
+        )
+        return IDToken(
+            raw: "header.payload.signature",
+            header: JWTHeader(alg: .eddsa, typ: "JWT", kid: "test-kid"),
+            payload: claims,
+            signature: Data()
+        )
+    }
+}
+
+// MARK: - SEC-L24: parseIDToken rejects forbidden / malformed headers
+
+@Suite("SEC-L24 JWTDecoder.parseIDToken header")
+struct SecL24MalformedHeaderTests {
+    @Test("alg \"none\" is rejected as malformed")
+    func algNoneRejected() {
+        // "none" is not a member of SigningAlgorithm, so header JSON decode
+        // fails — the alg=none downgrade attack can never reach validation.
+        #expect(throws: RauthyError.self) {
+            try JWTDecoder.parseIDToken(makeJWT(headerJSON: #"{"alg":"none","typ":"JWT"}"#))
+        }
+    }
+
+    @Test("alg \"HS256\" (symmetric) is rejected as malformed")
+    func algHS256Rejected() {
+        // HS256 is symmetric and intentionally unsupported; it must not decode.
+        #expect(throws: RauthyError.self) {
+            try JWTDecoder.parseIDToken(makeJWT(headerJSON: #"{"alg":"HS256","typ":"JWT"}"#))
+        }
+    }
+
+    @Test("header that is valid base64url but not valid JSON is rejected")
+    func nonJSONHeaderRejected() {
+        // 0xFF 0xFF 0xFF decodes cleanly from base64url but is not JSON, so
+        // `decode(_:)` passes the structural check and the header JSON-decode
+        // step is what trips → .malformedJWT.
+        let headerSegment = Data([0xFF, 0xFF, 0xFF]).base64URLEncodedString()
+        let payloadSegment = Data(#"{"sub":"x"}"#.utf8).base64URLEncodedString()
+        let signatureSegment = Data([0x01]).base64URLEncodedString()
+        let jwt = "\(headerSegment).\(payloadSegment).\(signatureSegment)"
+        #expect(throws: RauthyError.self) {
+            try JWTDecoder.parseIDToken(jwt)
+        }
+    }
+
+    /// Assemble a JWT string from a raw header JSON plus a throwaway payload
+    /// and signature (the payload/signature are never reached for these cases).
+    private func makeJWT(headerJSON: String) -> String {
+        let header = Data(headerJSON.utf8).base64URLEncodedString()
+        let payload = Data(#"{"sub":"user-1","aud":"my-app","iss":"https://auth.example.com","iat":1700000000,"exp":1700003600}"#.utf8)
+            .base64URLEncodedString()
+        let signature = Data([0x01, 0x02, 0x03]).base64URLEncodedString()
+        return "\(header).\(payload).\(signature)"
+    }
+}
+
+// MARK: - SEC-L27: RSAPublicKey.make modulus-size enforcement + round-trip
+
+@Suite("SEC-L27 RSAPublicKey")
+struct SecL27RSAPublicKeyTests {
+    @Test("rejects a sub-2048-bit modulus")
+    func rejectsSmallModulus() {
+        // A 1024-bit modulus (128 bytes, high bit clear) must be refused.
+        let smallN = Data([0x7F] + [UInt8](repeating: 0xAB, count: 127))  // 128 bytes = 1024 bits
+        let e = Data([0x01, 0x00, 0x01])  // 65537
+        #expect(throws: RSAPublicKeyError.self) {
+            _ = try RSAPublicKey.make(n: smallN, e: e)
+        }
+    }
+
+    @Test("parse/make round-trip for a valid 2048-bit key")
+    func roundTripValid2048() throws {
+        // Generate a real 2048-bit RSA key, export to PKCS#1 DER, parse out
+        // (n, e), rebuild a SecKey via make(), and confirm both the parse and
+        // the re-make succeed (and the modulus survives the round-trip).
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: 2048,
+        ]
+        var error: Unmanaged<CFError>?
+        let privateKey = try #require(
+            SecKeyCreateRandomKey(attributes as CFDictionary, &error),
+            "SecKeyCreateRandomKey failed"
+        )
+        let publicKey = try #require(SecKeyCopyPublicKey(privateKey))
+        let publicDER = try #require(
+            SecKeyCopyExternalRepresentation(publicKey, &error) as Data?,
+            "SecKeyCopyExternalRepresentation failed"
+        )
+
+        let (n, e) = try RSAPublicKey.parse(der: publicDER)
+        // A 2048-bit modulus is 256 bytes once leading-zero padding is stripped.
+        #expect(n.count == 256)
+
+        // Re-make a SecKey from the parsed components — must not throw.
+        let remade = try RSAPublicKey.make(n: n, e: e)
+
+        // And the re-made key's modulus must match the original.
+        let remadeDER = try #require(
+            SecKeyCopyExternalRepresentation(remade, &error) as Data?
+        )
+        let (n2, _) = try RSAPublicKey.parse(der: remadeDER)
+        #expect(n2 == n)
+    }
+}
+
+// MARK: - Signed-token helpers for full-pipeline security tests
+//
+// Builds a *real* Ed25519-signed id_token JWT plus the matching JWK so that
+// `RauthyClient.validateIDToken` / `completeSignIn` exercise the genuine
+// signature + claims path (not a stubbed token).
+
+enum SignedTokenHelpers {
+    static let kid = "test-kid"
+    static let issuer = URL(string: "https://auth.example.com")!
+
+    /// One Ed25519 keypair shared per build call.
+    static func makeKeyPair() -> Curve25519.Signing.PrivateKey {
+        Curve25519.Signing.PrivateKey()
+    }
+
+    /// The signing JWK (kty=OKP, crv=Ed25519, use=sig) for a private key.
+    static func jwk(for privateKey: Curve25519.Signing.PrivateKey, kid: String = kid) -> JWK {
+        JWK(
+            kty: "OKP",
+            alg: .eddsa,
+            kid: kid,
+            use: "sig",
+            crv: "Ed25519",
+            x: privateKey.publicKey.rawRepresentation.base64URLEncodedString()
+        )
+    }
+
+    /// Build a signed id_token JWT string. `roles`/`groups` drive the
+    /// userClaim gate; `now` anchors iat/exp so claims validation passes.
+    static func makeSignedIDToken(
+        privateKey: Curve25519.Signing.PrivateKey,
+        sub: String = "user-123",
+        roles: [String] = [],
+        groups: [String] = [],
+        nonce: String? = nil,
+        now: Date = Date(),
+        kid: String = kid,
+        tamperSignature: Bool = false,
+        alg: String = "EdDSA"
+    ) -> String {
+        let headerJSON = #"{"alg":"\#(alg)","typ":"JWT","kid":"\#(kid)"}"#
+
+        let iat = Int(now.timeIntervalSince1970)
+        let exp = iat + 3600
+        let rolesJSON = "[" + roles.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+        let groupsJSON = "[" + groups.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+        let nonceField = nonce.map { ",\"nonce\":\"\($0)\"" } ?? ""
+        // Include a verified email so tokens satisfy the production default
+        // `requireVerifiedEmail == true` — mirrors a real Rauthy token issued
+        // with the `email` scope.
+        let payloadJSON = """
+        {"sub":"\(sub)","aud":"my-app","iss":"https://auth.example.com","iat":\(iat),"exp":\(exp),"email":"user@example.com","email_verified":true,"roles":\(rolesJSON),"groups":\(groupsJSON)\(nonceField)}
+        """
+
+        let headerSeg = Data(headerJSON.utf8).base64URLEncodedString()
+        let payloadSeg = Data(payloadJSON.utf8).base64URLEncodedString()
+        let signingInput = "\(headerSeg).\(payloadSeg)"
+        var signature = (try? privateKey.signature(for: Data(signingInput.utf8))) ?? Data()
+        if tamperSignature, !signature.isEmpty {
+            signature[0] ^= 0xFF
+        }
+        let sigSeg = signature.base64URLEncodedString()
+        return "\(signingInput).\(sigSeg)"
+    }
+
+    /// Discovery JSON body served at `.well-known/openid-configuration`.
+    static let discoveryBody = """
+    {
+        "issuer": "https://auth.example.com",
+        "authorization_endpoint": "https://auth.example.com/authorize",
+        "token_endpoint": "https://auth.example.com/token",
+        "userinfo_endpoint": "https://auth.example.com/userinfo",
+        "jwks_uri": "https://auth.example.com/jwks",
+        "response_types_supported": ["code"]
+    }
+    """
+
+    /// JWKS JSON body wrapping a list of JWKs.
+    static func jwksBody(_ keys: [JWK]) -> Data {
+        (try? JSONEncoder().encode(JWKSet(keys: keys))) ?? Data("{\"keys\":[]}".utf8)
+    }
+
+    /// Token endpoint JSON body embedding a signed id_token.
+    static func tokenBody(idToken: String, accessToken: String = "at-new", refreshToken: String = "rt-new") -> Data {
+        let json = """
+        {
+            "access_token": "\(accessToken)",
+            "refresh_token": "\(refreshToken)",
+            "id_token": "\(idToken)",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "openid profile"
+        }
+        """
+        return Data(json.utf8)
+    }
+}
+
+// MARK: - Security wire tests (share the process-global MockURLProtocol.handler)
+
+@Suite("SecurityWire", .serialized)
+enum SecurityWireTests {
+
+// MARK: - SEC-L25: JWKSFetcher transport / status / decode behavior
+
+@Suite("SEC-L25 JWKSFetcher.fetch")
+struct SecL25JWKSFetcherTests {
+    private static let jwksURL = URL(string: "https://auth.example.com/jwks")!
+
+    @Test("200 with valid body decodes the key set")
+    func decodesValid() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body = """
+            { "keys": [ { "kty": "OKP", "crv": "Ed25519", "kid": "k1", "x": "AAAA" } ] }
+            """
+            return (response, Data(body.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let set = try await JWKSFetcher.fetch(url: Self.jwksURL, session: session)
+        #expect(set.keys.count == 1)
+        #expect(set.keys.first?.kid == "k1")
+    }
+
+    @Test("500 throws RauthyError.server")
+    func serverErrorOn500() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (response, Data("boom".utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        do {
+            _ = try await JWKSFetcher.fetch(url: Self.jwksURL, session: session)
+            Issue.record("expected throw")
+        } catch RauthyError.server {
+            // ok
+        } catch {
+            Issue.record("expected .server, got \(error)")
+        }
+    }
+
+    @Test("transport error throws networkUnavailable")
+    func networkErrorIsMapped() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        await #expect(throws: RauthyError.networkUnavailable) {
+            _ = try await JWKSFetcher.fetch(url: Self.jwksURL, session: session)
+        }
+    }
+
+    @Test("malformed JSON on 200 throws")
+    func malformedJSONThrows() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data("not json at all".utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        // A decode failure is mapped to networkUnavailable by the fetcher's
+        // catch-all; the contract that matters is "it throws, never returns
+        // a bogus empty set."
+        await #expect(throws: RauthyError.self) {
+            _ = try await JWKSFetcher.fetch(url: Self.jwksURL, session: session)
+        }
+    }
+}
+
+// MARK: - SEC-M05: validateIDToken rejects wrong-alg and bad-signature tokens
+
+@Suite("SEC-M05 validateIDToken")
+struct SecM05ValidateIDTokenTests {
+    @Test("wrong algorithm (not in allowlist) is rejected before crypto")
+    func wrongAlgorithmRejected() async throws {
+        // Configure the client to allow ONLY EdDSA, then hand it an RS256
+        // id_token. The allowlist guard must trip before any JWKS fetch.
+        let session = WireTestHelpers.makeMockSession()
+        let config = RauthyConfig.production(
+            issuer: SignedTokenHelpers.issuer,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://cb")!,
+            allowedAlgorithms: [.eddsa],
+            userClaim: .any,
+            adminClaim: .none
+        )
+
+        nonisolated(unsafe) var jwksFetches = 0
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(SignedTokenHelpers.discoveryBody.utf8))
+            }
+            if request.url?.path == "/jwks" {
+                jwksFetches += 1
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, SignedTokenHelpers.jwksBody([]))
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let discovery = WireTestHelpers.makeDiscovery()
+        let client = RauthyClient(config: config, storage: InMemoryStorage(), urlSession: session)
+
+        let rs256Token = IDToken(
+            raw: "h.p.s",
+            header: JWTHeader(alg: .rs256, typ: "JWT", kid: "test-kid"),
+            payload: IDTokenClaims(
+                sub: "user-123",
+                aud: ["my-app"],
+                iss: SignedTokenHelpers.issuer,
+                iat: Date(),
+                exp: Date(timeIntervalSinceNow: 3600)
+            ),
+            signature: Data()
+        )
+
+        do {
+            try await client.validateIDToken(
+                rs256Token, accessToken: "at", nonce: nil, discovery: discovery
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.wrongAlgorithm) {
+            // ok — and crucially we never fetched JWKS.
+            #expect(jwksFetches == 0)
+        } catch {
+            Issue.record("expected wrongAlgorithm, got \(error)")
+        }
+    }
+
+    @Test("tampered signature is rejected as signatureInvalid")
+    func tamperedSignatureRejected() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let privateKey = SignedTokenHelpers.makeKeyPair()
+        let jwk = SignedTokenHelpers.jwk(for: privateKey)
+
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(SignedTokenHelpers.discoveryBody.utf8))
+            }
+            // /jwks — return the correct key, so the failure is purely the
+            // tampered signature, not a key miss.
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, SignedTokenHelpers.jwksBody([jwk]))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let discovery = WireTestHelpers.makeDiscovery()
+        let client = RauthyClient(config: config, storage: InMemoryStorage(), urlSession: session)
+
+        let raw = SignedTokenHelpers.makeSignedIDToken(
+            privateKey: privateKey,
+            tamperSignature: true
+        )
+        let idToken = try JWTDecoder.parseIDToken(raw)
+
+        do {
+            try await client.validateIDToken(
+                idToken, accessToken: "at", nonce: nil, discovery: discovery
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.invalidJWT(.signatureInvalid) {
+            // ok
+        } catch {
+            Issue.record("expected signatureInvalid, got \(error)")
+        }
+    }
+
+    @Test("kid miss triggers exactly one JWKS refetch, then succeeds")
+    func kidMissRefetchesOnce() async throws {
+        let session = WireTestHelpers.makeMockSession()
+        let config = WireTestHelpers.makeConfig()
+        let privateKey = SignedTokenHelpers.makeKeyPair()
+        let goodJWK = SignedTokenHelpers.jwk(for: privateKey)
+        // A decoy key with a different kid so the first select() misses.
+        let decoyJWK = SignedTokenHelpers.jwk(for: SignedTokenHelpers.makeKeyPair(), kid: "other-kid")
+
+        nonisolated(unsafe) var jwksFetches = 0
+        let lock = NSLock()
+        MockURLProtocol.handler = { request in
+            if request.url?.path == "/.well-known/openid-configuration" {
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(SignedTokenHelpers.discoveryBody.utf8))
+            }
+            // /jwks — first hit returns only the decoy (kid miss); second hit
+            // returns the real key (post-rotation).
+            lock.lock(); jwksFetches += 1; let n = jwksFetches; lock.unlock()
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let keys = n == 1 ? [decoyJWK] : [goodJWK]
+            return (response, SignedTokenHelpers.jwksBody(keys))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let discovery = WireTestHelpers.makeDiscovery()
+        let client = RauthyClient(config: config, storage: InMemoryStorage(), urlSession: session)
+
+        let raw = SignedTokenHelpers.makeSignedIDToken(privateKey: privateKey)
+        let idToken = try JWTDecoder.parseIDToken(raw)
+
+        // Should not throw: kid miss on the first JWKS, refetch finds the key.
+        try await client.validateIDToken(
+            idToken, accessToken: "at", nonce: nil, discovery: discovery
+        )
+        // Exactly two fetches: the initial fetch plus one refetch.
+        #expect(jwksFetches == 2)
+    }
+}
+
+// MARK: - SEC-M01 / M06: completeSignIn userClaim gate + state (CSRF) check
+
+@Suite("SEC-M01/M06 completeSignIn")
+struct SecM01M06CompleteSignInTests {
+    /// Build a client whose discovery/token/JWKS endpoints are all mocked, and
+    /// whose `/token` returns a signed id_token carrying `roles`/`groups`.
+    @MainActor
+    private func makeClient(
+        userClaim: ClaimRule,
+        roles: [String],
+        groups: [String],
+        nonce: String? = nil
+    ) -> (RauthyClient, InMemoryStorage) {
+        let session = WireTestHelpers.makeMockSession()
+        let config = RauthyConfig.production(
+            issuer: SignedTokenHelpers.issuer,
+            clientID: "my-app",
+            redirectURI: URL(string: "myapp://cb")!,
+            scopes: ["openid", "profile"],
+            userClaim: userClaim,
+            adminClaim: .none
+        )
+        let privateKey = SignedTokenHelpers.makeKeyPair()
+        let jwk = SignedTokenHelpers.jwk(for: privateKey)
+        // Bake in the nonce so the minted id_token matches the nonce the test
+        // passes to completeSignIn (validateIDToken enforces nonce equality).
+        let idToken = SignedTokenHelpers.makeSignedIDToken(
+            privateKey: privateKey,
+            roles: roles,
+            groups: groups,
+            nonce: nonce
+        )
+
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/.well-known/openid-configuration":
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data(SignedTokenHelpers.discoveryBody.utf8))
+            case "/token":
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (response, SignedTokenHelpers.tokenBody(idToken: idToken))
+            case "/jwks":
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, SignedTokenHelpers.jwksBody([jwk]))
+            default:
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (response, Data())
+            }
+        }
+
+        let storage = InMemoryStorage()
+        let client = RauthyClient(config: config, storage: storage, urlSession: session)
+        return (client, storage)
+    }
+
+    @Test("user not satisfying a restrictive userClaim is rejected; no token saved")
+    func restrictiveClaimRejects() async throws {
+        // Require role "admin"; the token only carries role "user" → reject.
+        let (client, storage) = await makeClient(
+            userClaim: .or([.role("admin")]),
+            roles: ["user"],
+            groups: [],
+            nonce: "n1"
+        )
+        defer { MockURLProtocol.handler = nil }
+        let discovery = WireTestHelpers.makeDiscovery()
+
+        do {
+            _ = try await client.completeSignIn(
+                callbackURL: URL(string: "myapp://cb?code=abc&state=s1")!,
+                state: "s1",
+                nonce: "n1",
+                pkce: PKCE(),
+                discovery: discovery
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.notAuthorized {
+            // ok — and nothing was persisted.
+            let stored = try await storage.load()
+            #expect(stored == nil)
+        } catch {
+            Issue.record("expected notAuthorized, got \(error)")
+        }
+    }
+
+    @Test(".any userClaim admits the user and saves the token")
+    func anyClaimSucceeds() async throws {
+        let (client, storage) = await makeClient(
+            userClaim: .any,
+            roles: ["user"],
+            groups: [],
+            nonce: "n1"
+        )
+        defer { MockURLProtocol.handler = nil }
+        let discovery = WireTestHelpers.makeDiscovery()
+
+        let token = try await client.completeSignIn(
+            callbackURL: URL(string: "myapp://cb?code=abc&state=s1")!,
+            state: "s1",
+            nonce: "n1",
+            pkce: PKCE(),
+            discovery: discovery
+        )
+        #expect(token.accessToken == "at-new")
+
+        let stored = try await storage.load()
+        #expect(stored?.accessToken == "at-new")
+    }
+
+    @Test("state mismatch throws .stateMismatch and saves nothing")
+    func stateMismatchRejects() async throws {
+        let (client, storage) = await makeClient(
+            userClaim: .any,
+            roles: [],
+            groups: []
+        )
+        defer { MockURLProtocol.handler = nil }
+        let discovery = WireTestHelpers.makeDiscovery()
+
+        do {
+            _ = try await client.completeSignIn(
+                callbackURL: URL(string: "myapp://cb?code=abc&state=ATTACKER")!,
+                state: "EXPECTED",
+                nonce: "n1",
+                pkce: PKCE(),
+                discovery: discovery
+            )
+            Issue.record("expected throw")
+        } catch RauthyError.stateMismatch {
+            // ok — token exchange never ran, nothing persisted.
+            let stored = try await storage.load()
+            #expect(stored == nil)
+        } catch {
+            Issue.record("expected stateMismatch, got \(error)")
+        }
+    }
+}
+
+}  // end of SecurityWireTests parent suite

@@ -76,6 +76,14 @@ public enum JWTClaimsValidator {
             )
         }
 
+        // OIDC Core §3.1.3.7 rule 4: when the token has multiple audiences,
+        // an azp claim must be present (and rule 5, checked below, pins it).
+        if claims.aud.count > 1 && claims.azp == nil {
+            throw RauthyError.invalidJWT(
+                .wrongAzp(expected: context.clientID, got: "<missing>")
+            )
+        }
+
         // Authorized party, when present, must match our client ID.
         if let azp = claims.azp, azp != context.clientID {
             throw RauthyError.invalidJWT(
@@ -86,6 +94,12 @@ public enum JWTClaimsValidator {
         // Expiry.
         if now.timeIntervalSince(claims.exp) > context.leeway {
             throw RauthyError.invalidJWT(.expired)
+        }
+
+        // Issued-at: a token minted meaningfully in the future is not yet
+        // usable (clock skew tolerated within leeway).
+        if claims.iat.timeIntervalSince(now) > context.leeway {
+            throw RauthyError.invalidJWT(.notYetValid)
         }
 
         // Not-before: a token whose nbf is meaningfully in the future is

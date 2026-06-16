@@ -65,9 +65,11 @@ extension RauthyClient {
         let trimmedBase = baseString.hasSuffix("/")
             ? String(baseString.dropLast())
             : baseString
-        let trimmedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        // swift-format-ignore: NeverForceUnwrap
-        return URL(string: "\(trimmedBase)/\(trimmedPath)")!
+        let rawPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let trimmedPath = rawPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        // Fall back to the issuer origin rather than force-unwrapping if the
+        // composed string somehow fails to parse.
+        return URL(string: "\(trimmedBase)/\(trimmedPath)") ?? config.issuer
     }
 }
 #endif

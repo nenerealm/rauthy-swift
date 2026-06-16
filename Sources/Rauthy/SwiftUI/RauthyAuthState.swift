@@ -37,6 +37,9 @@ public final class RauthyAuthState: ObservableObject {
 
     public let client: RauthyClient
 
+    /// Single-flight guard so concurrent `.task`-triggered bootstraps coalesce.
+    private var bootstrapTask: Task<Void, Never>?
+
     public init(client: RauthyClient) {
         self.client = client
     }
@@ -56,19 +59,38 @@ public final class RauthyAuthState: ObservableObject {
         CurrentWindowHolder.shared.window
     }
 
-    /// Restore any previously-saved session, falling back to `.signedOut`
-    /// on any failure. Call once at app launch via `.task`.
+    /// Restore any previously-saved session. Fails **closed**: if the server
+    /// has invalidated the session (401), the user is signed out and local
+    /// storage cleared; a locally-cached token is only trusted when the
+    /// failure was a genuine network outage. Idempotent / single-flight, so
+    /// it is safe to call from `.task` (which may re-run on view identity
+    /// changes). Call once at app launch.
     public func bootstrap() async {
+        if let existing = bootstrapTask {
+            return await existing.value
+        }
+        let task = Task { await self.runBootstrap() }
+        bootstrapTask = task
+        await task.value
+        bootstrapTask = nil
+    }
+
+    private func runBootstrap() async {
+        lastError = nil
+        guard (try? await client.restoreSession()) ?? nil != nil else {
+            status = .signedOut
+            return
+        }
         do {
-            guard try await client.restoreSession() != nil else {
-                status = .signedOut
-                return
-            }
-            var user: User? = try? await client.fetchUser()
-            if user == nil {
-                user = await userFromCurrentToken()
-            }
-            if let user {
+            status = .signedIn(try await client.fetchUser())
+        } catch RauthyError.reauthenticationRequired {
+            // Server has invalidated the session — fail closed.
+            try? await client.signOut(scope: .local)
+            status = .signedOut
+        } catch RauthyError.networkUnavailable {
+            // Genuine offline: fall back to the locally-stored, still-valid
+            // ID token so a flaky network does not bounce the user to login.
+            if let user = await userFromCurrentToken() {
                 status = .signedIn(user)
             } else {
                 status = .signedOut
@@ -89,6 +111,7 @@ public final class RauthyAuthState: ObservableObject {
             lastError = .missingPresentationContext
             return
         }
+        lastError = nil
         isBusy = true
         defer { isBusy = false }
         do {
@@ -168,6 +191,7 @@ public final class RauthyAuthState: ObservableObject {
     /// token exists.
     private func userFromCurrentToken() async -> User? {
         guard let token = try? await client.restoreSession(),
+              !token.isExpired(),
               let idToken = token.idToken
         else { return nil }
         return User(idToken: idToken)

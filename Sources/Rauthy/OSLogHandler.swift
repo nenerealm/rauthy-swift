@@ -67,18 +67,22 @@ public struct RauthyOSLogHandler: LogHandler {
             metaString = " " + pairs
         }
 
-        let line = "\(message)\(metaString)"
+        // The static message text is safe to log publicly; dynamic metadata
+        // values may carry identifiers (sub, kid, error details), so mark them
+        // `.private` so OSLog redacts them as <private> in Console.app on
+        // shipped builds unless the device is configured to reveal them.
+        let msg = "\(message)"
         switch level {
         case .trace, .debug:
-            logger.debug("\(line, privacy: .public)")
+            logger.debug("\(msg, privacy: .public)\(metaString, privacy: .private)")
         case .info, .notice:
-            logger.info("\(line, privacy: .public)")
+            logger.info("\(msg, privacy: .public)\(metaString, privacy: .private)")
         case .warning:
-            logger.warning("\(line, privacy: .public)")
+            logger.warning("\(msg, privacy: .public)\(metaString, privacy: .private)")
         case .error:
-            logger.error("\(line, privacy: .public)")
+            logger.error("\(msg, privacy: .public)\(metaString, privacy: .private)")
         case .critical:
-            logger.fault("\(line, privacy: .public)")
+            logger.fault("\(msg, privacy: .public)\(metaString, privacy: .private)")
         }
     }
 

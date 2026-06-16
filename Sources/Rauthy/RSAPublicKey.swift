@@ -30,6 +30,11 @@ enum RSAPublicKey {
 
         let normalizedN = positiveInteger(n)
         let bitSize = normalizedN.count * 8
+        guard bitSize >= 2048 else {
+            throw RSAPublicKeyError.creationFailed(
+                "RSA modulus is \(bitSize) bits; minimum 2048 required"
+            )
+        }
 
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
@@ -136,6 +141,11 @@ enum RSAPublicKey {
             return Int(first)
         }
         let numBytes = Int(first & 0x7F)
+        guard numBytes <= 8 else {
+            throw RSAPublicKeyError.parseError(
+                "DER length uses \(numBytes) bytes; refusing (overflow guard)"
+            )
+        }
         var length = 0
         for _ in 0..<numBytes {
             guard index < bytes.count else {

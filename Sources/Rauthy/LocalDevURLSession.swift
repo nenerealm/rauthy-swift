@@ -24,11 +24,17 @@ internal enum LocalDevURLSession {
     ///
     /// If `trustedSelfSignedCAs` is empty, returns `URLSession.shared` —
     /// no point spinning up a custom delegate that doesn't change behavior.
-    static func make(settings: RauthyConfig.LocalDevSettings) -> URLSession {
+    static func make(
+        settings: RauthyConfig.LocalDevSettings,
+        issuerHost: String? = nil
+    ) -> URLSession {
         if settings.trustedSelfSignedCAs.isEmpty {
             return .shared
         }
-        let delegate = TrustingDelegate(trustedCAs: settings.trustedSelfSignedCAs)
+        let delegate = TrustingDelegate(
+            trustedCAs: settings.trustedSelfSignedCAs,
+            issuerHost: issuerHost
+        )
         let configuration = URLSessionConfiguration.ephemeral
         return URLSession(
             configuration: configuration,
@@ -44,11 +50,13 @@ internal enum LocalDevURLSession {
 /// server-trust challenges.
 private final class TrustingDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
     private let anchorCerts: [SecCertificate]
+    private let issuerHost: String?
 
-    init(trustedCAs: [Data]) {
+    init(trustedCAs: [Data], issuerHost: String?) {
         self.anchorCerts = trustedCAs.compactMap { data in
             SecCertificateCreateWithData(nil, data as CFData)
         }
+        self.issuerHost = issuerHost
         super.init()
     }
 
@@ -60,6 +68,13 @@ private final class TrustingDelegate: NSObject, URLSessionDelegate, @unchecked S
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let serverTrust = challenge.protectionSpace.serverTrust
         else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
+        // Only apply the dev anchors to the configured issuer host; any other
+        // host goes through default system trust evaluation.
+        if let issuerHost, challenge.protectionSpace.host != issuerHost {
             completionHandler(.performDefaultHandling, nil)
             return
         }

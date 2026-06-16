@@ -101,9 +101,12 @@ internal func decodeServerErrorResponse(
             message: envelope.message
         ))
     }
+    // Cap the raw body so an oversized/sensitive error payload can't bloat
+    // the error value or leak verbatim into logs.
+    let capped = String(data: data, encoding: .utf8).map { String($0.prefix(512)) }
     return .server(ServerError(
         statusCode: statusCode,
-        message: String(data: data, encoding: .utf8)
+        message: capped
     ))
 }
 

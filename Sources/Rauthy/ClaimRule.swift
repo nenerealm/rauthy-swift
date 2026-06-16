@@ -35,7 +35,9 @@ public indirect enum ClaimRule: Sendable, Codable, Equatable {
         case .or(let claims):
             return claims.contains { $0.matches(roles: roles, groups: groups) }
         case .and(let claims):
-            return claims.allSatisfy { $0.matches(roles: roles, groups: groups) }
+            // Empty AND must fail closed (an empty allSatisfy is vacuously
+            // true). Use `.any` to deliberately admit everyone.
+            return !claims.isEmpty && claims.allSatisfy { $0.matches(roles: roles, groups: groups) }
         }
     }
 }

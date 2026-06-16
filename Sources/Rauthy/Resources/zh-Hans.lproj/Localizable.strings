@@ -8,6 +8,7 @@
 "error.userCancelled"              = "登录已取消。";
 "error.userInteractionRequired"    = "需要补充登录信息,请重新登录。";
 "error.stateMismatch"              = "登录未通过安全校验,请重试。";
+"error.notAuthorized"              = "你没有使用此应用的权限,请联系管理员。";
 "error.networkUnavailable"         = "网络不可用,请检查网络连接后重试。";
 "error.sessionNotFound"            = "未找到登录会话。";
 "error.tokenExpired"               = "登录已过期。";

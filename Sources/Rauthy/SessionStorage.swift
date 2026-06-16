@@ -140,6 +140,12 @@ public actor KeychainStorage: SessionStorage {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            // Use the modern data-protection keychain. Implied on iOS; on
+            // macOS this opts into the iOS-style keychain instead of the
+            // legacy file-based one. (macOS note: items written before this
+            // change won't be found — the token is simply re-obtained via
+            // refresh / re-login.)
+            kSecUseDataProtectionKeychain as String: true,
         ]
         if let accessGroup {
             query[kSecAttrAccessGroup as String] = accessGroup

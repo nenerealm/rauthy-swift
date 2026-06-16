@@ -44,10 +44,16 @@ RauthyConfig.production(
 )
 ```
 
-The SDK doesn't currently enforce these at sign-in (that's a v1.1
-roadmap item) — they're available as ``RauthySession/isUser`` and
-``RauthySession/isAdmin``-style checks. v1.1 will reject tokens that
-fail `userClaim` at sign-in time.
+`userClaim` is **enforced at sign-in**: a user who does not satisfy the
+rule is rejected with ``RauthyError/notAuthorized`` and never gets a
+session. Pass `.any` to admit any Rauthy user. `adminClaim` is not a gate
+— it marks a sub-group of users as admins for your own checks and the
+SwiftUI claim gates below.
+
+> Note: ``Claim/group(_:)`` / ``Claim/role(_:)`` rules are evaluated
+> against the ID token's `groups` / `roles` claims, which are only present
+> when the matching scope was requested. Request the `groups` scope (and
+> ensure Rauthy emits `roles`) when gating on them — otherwise use `.any`.
 
 ## In SwiftUI
 

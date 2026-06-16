@@ -38,6 +38,12 @@ public enum RauthyError: Error, Sendable, LocalizedError {
     /// Indicates a possible cross-site request forgery attempt.
     case stateMismatch
 
+    /// The user authenticated successfully with the IdP but does not satisfy
+    /// the app's configured `userClaim` rule, so they are not permitted to
+    /// use this app. Recovery: there is none for this user — surface a
+    /// "you don't have access" message.
+    case notAuthorized
+
     // MARK: Network / protocol
 
     case networkUnavailable
@@ -81,6 +87,7 @@ extension RauthyError: Equatable {
              (.userCancelled, .userCancelled),
              (.userInteractionRequired, .userInteractionRequired),
              (.stateMismatch, .stateMismatch),
+             (.notAuthorized, .notAuthorized),
              (.networkUnavailable, .networkUnavailable),
              (.tokenExpired, .tokenExpired),
              (.reauthenticationRequired, .reauthenticationRequired):
@@ -150,6 +157,8 @@ extension RauthyError {
             return RauthyL10n.string("error.userInteractionRequired")
         case .stateMismatch:
             return RauthyL10n.string("error.stateMismatch")
+        case .notAuthorized:
+            return RauthyL10n.string("error.notAuthorized")
         case .networkUnavailable:
             return RauthyL10n.string("error.networkUnavailable")
         case .oauth(let inner):

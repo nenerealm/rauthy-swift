@@ -36,6 +36,9 @@ public enum WebAuthBridge {
                 url: url,
                 callbackURLScheme: callbackScheme
             ) { callbackURL, error in
+                // Keep `provider` alive until the callback fires —
+                // `presentationContextProvider` holds it weakly.
+                withExtendedLifetime(provider) {}
                 if let error {
                     continuation.resume(throwing: Self.map(error))
                     return

@@ -48,10 +48,16 @@ let auth = RauthyAuthState(
 
 The ``ClaimRule`` values define who can use your app:
 
-- `userClaim` — every authenticated user must satisfy this rule. Pass
-  ``ClaimRule/any`` to admit any Rauthy user.
+- `userClaim` — enforced at sign-in. A user who does not satisfy this rule
+  is rejected with ``RauthyError/notAuthorized`` and never reaches the
+  signed-in state. Pass ``ClaimRule/any`` to admit any Rauthy user.
 - `adminClaim` — a sub-group of users marked as admins. Pass
   ``ClaimRule/none`` if you don't have admins.
+
+> Note: `.group(...)` / `.role(...)` rules are checked against the ID
+> token's `groups` / `roles` claims, which are only present when the
+> matching scope was requested. Request the `groups` scope when gating on
+> groups; ``ClaimRule/any`` admits everyone regardless of claims.
 
 ## Wire up SwiftUI
 
