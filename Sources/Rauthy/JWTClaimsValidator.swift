@@ -144,15 +144,15 @@ public enum JWTClaimsValidator {
     /// the JOSE `alg` parameter, keep the left half of the digest, and
     /// base64url-encode it.
     ///
-    /// - RS256, EdDSA → SHA-256 / 16 bytes
+    /// - RS256 → SHA-256 / 16 bytes
     /// - RS384 → SHA-384 / 24 bytes
-    /// - RS512 → SHA-512 / 32 bytes
+    /// - RS512, EdDSA → SHA-512 / 32 bytes
     ///
-    /// (EdDSA uses Ed25519's internal SHA-512, but historically OIDC IdPs
-    /// have used SHA-256 for EdDSA `at_hash` to align with the OIDC family
-    /// of digest sizes. Rauthy doesn't currently emit `at_hash` for any
-    /// alg per its discovery document, so this branch is defensive code
-    /// for future Rauthy versions or other Rauthy-compatible IdPs.)
+    /// EdDSA (Ed25519) hashes with SHA-512 internally, and Rauthy maps
+    /// `EdDSA → Sha512` for `at_hash` (see Rauthy `src/service/src/token_set.rs`,
+    /// `AtHashAlg::try_from`), taking the left 32 of 64 bytes. Rauthy DOES emit
+    /// `at_hash` (verified against a live EdDSA token), so this MUST match —
+    /// using SHA-256 here produces `.atHashMismatch`.
     internal static func computeAtHash(
         accessToken: String,
         algorithm: SigningAlgorithm
@@ -160,11 +160,11 @@ public enum JWTClaimsValidator {
         let bytes = Data(accessToken.utf8)
         let half: Data
         switch algorithm {
-        case .rs256, .eddsa:
+        case .rs256:
             half = Data(SHA256.hash(data: bytes).prefix(16))
         case .rs384:
             half = Data(SHA384.hash(data: bytes).prefix(24))
-        case .rs512:
+        case .rs512, .eddsa:
             half = Data(SHA512.hash(data: bytes).prefix(32))
         }
         return half.base64URLEncodedString()
